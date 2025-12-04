@@ -6,6 +6,8 @@ struct Tab: Identifiable, Equatable {
     let id: UInt64
     var title: String
     var isDirty: Bool
+    var hasPath: Bool  // true if file has been saved to disk
+    var filePath: URL?
 }
 
 /// Observable state wrapper around the Rust editor core
@@ -29,7 +31,7 @@ final class EditorState: ObservableObject {
 
     func newTab() {
         let newId = editor.new_tab()
-        tabs.append(Tab(id: newId, title: "Untitled", isDirty: false))
+        tabs.append(Tab(id: newId, title: "Untitled", isDirty: false, hasPath: false, filePath: nil))
         syncFromRust()
     }
 
@@ -39,7 +41,7 @@ final class EditorState: ObservableObject {
             // If all tabs closed, Rust creates a new one - we need to track it
             if tabs.isEmpty {
                 let newId = editor.get_active_tab_id()
-                tabs.append(Tab(id: newId, title: "Untitled", isDirty: false))
+                tabs.append(Tab(id: newId, title: "Untitled", isDirty: false, hasPath: false, filePath: nil))
             }
         }
         syncFromRust()
@@ -81,7 +83,7 @@ final class EditorState: ObservableObject {
                 let fileName = url.lastPathComponent
                 // Only add if not already in tabs (file might already be open)
                 if !tabs.contains(where: { $0.id == newId }) {
-                    tabs.append(Tab(id: newId, title: fileName, isDirty: false))
+                    tabs.append(Tab(id: newId, title: fileName, isDirty: false, hasPath: true, filePath: url))
                 }
             }
             syncFromRust()
@@ -113,8 +115,35 @@ final class EditorState: ObservableObject {
             if !error.toString().isEmpty {
                 // TODO: Show error alert
                 print("Error saving: \(error)")
+            } else {
+                // Update tab with new path
+                if let idx = tabs.firstIndex(where: { $0.id == activeTabId }) {
+                    tabs[idx].hasPath = true
+                    tabs[idx].filePath = url
+                    tabs[idx].title = url.lastPathComponent
+                }
             }
             syncFromRust()
+        }
+    }
+
+    func renameCurrentFile(to newName: String) {
+        guard let idx = tabs.firstIndex(where: { $0.id == activeTabId }),
+              let oldPath = tabs[idx].filePath else { return }
+
+        let newURL = oldPath.deletingLastPathComponent().appendingPathComponent(newName)
+
+        do {
+            try FileManager.default.moveItem(at: oldPath, to: newURL)
+            // Update Rust's path by saving to new location
+            let error = editor.save_file_as(newURL.path)
+            if error.toString().isEmpty {
+                tabs[idx].filePath = newURL
+                tabs[idx].title = newName
+            }
+            syncFromRust()
+        } catch {
+            print("Error renaming file: \(error)")
         }
     }
 
@@ -167,7 +196,7 @@ final class EditorState: ObservableObject {
 
         // Initialize tabs if empty (first run)
         if tabs.isEmpty {
-            tabs.append(Tab(id: activeTabId, title: title, isDirty: isDirty))
+            tabs.append(Tab(id: activeTabId, title: title, isDirty: isDirty, hasPath: false, filePath: nil))
         }
 
         // Update active tab's info
