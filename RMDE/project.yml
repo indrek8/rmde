@@ -1,0 +1,60 @@
+name: RMDE
+options:
+  bundleIdPrefix: com.rmde
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "15.0"
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    SWIFT_OBJC_BRIDGING_HEADER: Sources/Bridge/RMDE-Bridging-Header.h
+    LIBRARY_SEARCH_PATHS:
+      - "$(PROJECT_DIR)/../target/release"
+    HEADER_SEARCH_PATHS:
+      - "$(PROJECT_DIR)/Sources/Bridge"
+    OTHER_LDFLAGS:
+      - "-lrmde_core"
+
+targets:
+  RMDE:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+        excludes:
+          - "**/*.h"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rmde.app
+        PRODUCT_NAME: RMDE
+        INFOPLIST_GENERATION_MODE: GeneratedFile
+        INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.developer-tools"
+        INFOPLIST_KEY_CFBundleDisplayName: RMDE
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: YES
+        SWIFT_OBJC_BRIDGING_HEADER: $(PROJECT_DIR)/Sources/Bridge/RMDE-Bridging-Header.h
+        LIBRARY_SEARCH_PATHS:
+          - "$(PROJECT_DIR)/../target/release"
+        HEADER_SEARCH_PATHS:
+          - "$(PROJECT_DIR)/Sources/Bridge"
+        OTHER_LDFLAGS:
+          - "-lrmde_core"
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: RMDE
+        CFBundleName: RMDE
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSMinimumSystemVersion: "14.0"
+        NSHighResolutionCapable: true
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Markdown
+            CFBundleTypeRole: Editor
+            LSItemContentTypes:
+              - net.daringfireball.markdown
+              - public.plain-text
+            LSHandlerRank: Default

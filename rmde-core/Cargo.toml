@@ -1,0 +1,21 @@
+[package]
+name = "rmde-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Core library for RMDE - Rust Markdown Editor"
+
+[lib]
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+ropey.workspace = true
+tree-sitter.workspace = true
+tree-sitter-md.workspace = true
+parking_lot.workspace = true
+thiserror.workspace = true
+swift-bridge = "0.1"
+
+[build-dependencies]
+swift-bridge-build = "0.1"
