@@ -1,34 +1,46 @@
 # Rust
 /target/
-Cargo.lock
+**/*.rs.bk
 
-# Generated swift-bridge files (regenerated on build)
+# Swift bridge output (regenerated on build)
 rmde-core/generated/
+RMDE/Sources/Bridge/*
+!RMDE/Sources/Bridge/RMDE-Bridging-Header.h
 
-# Xcode
+# Xcode / XcodeGen
 RMDE/RMDE.xcodeproj/
 RMDE/Info.plist
-RMDE/*.xcworkspace/
-RMDE/xcuserdata/
 RMDE/build/
+DerivedData/
+RMDE/DerivedData/
+*.xcworkspace/
 *.xcuserstate
 *.xcscmblueprint
+*.xcarchive
+*.xccheckout
 
-# Generated Swift bridge files (copied from rmde-core/generated/)
-RMDE/Sources/Bridge/SwiftBridgeCore.swift
-RMDE/Sources/Bridge/SwiftBridgeCore.h
-RMDE/Sources/Bridge/RMDECore.swift
-RMDE/Sources/Bridge/rmde-core.h
+# SwiftPM (if used inside RMDE app)
+.build/
+.swiftpm/
+RMDE/.build/
+RMDE/.swiftpm/
 
 # macOS
 .DS_Store
 *.dSYM/
 
-# IDE
+# IDE / editors
+.vscode/
 .idea/
 *.swp
 *.swo
 *~
+*.log
+
+# Environment
+.env
+.env.*
+!.env.example
 
 # Claude Code
 .claude/
@@ -36,6 +48,8 @@ CLAUDE.md
 
 # Google Gemini CLI
 .gemini/
+GEMINI.md
 
 # Codex CLI
 AGENT.md
+AGENTS.md
