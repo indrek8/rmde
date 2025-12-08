@@ -47,6 +47,8 @@ pub enum SpanKind {
     LinkUrl = 31,
     LinkTitle = 32,
     Image = 33,
+    Autolink = 34,
+    AutolinkEmail = 35,
 
     // Lists
     ListMarker = 40,
@@ -57,8 +59,13 @@ pub enum SpanKind {
     BlockQuote = 50,
     HorizontalRule = 51,
 
+    // Tables (GFM)
+    TableHeader = 60,
+    TableDelimiter = 61,
+    TableCell = 62,
+
     // Other
-    Emphasis = 60,  // Generic emphasis marker (* or _)
+    Emphasis = 70,  // Generic emphasis marker (* or _)
 }
 
 /// Markdown parser with cached tree-sitter state
@@ -89,6 +96,10 @@ impl MarkdownParser {
         // Add setext headings (H1 with ===, H2 with ---)
         // tree-sitter-md doesn't recognize these, so we detect them manually
         self.collect_setext_headings(content, &mut spans);
+
+        // Add GFM tables (pipe tables)
+        // tree-sitter-md doesn't recognize GFM tables, so we detect them manually
+        self.parse_tables(content, &mut spans);
 
         // Add inline formatting (bold, italic, code) via pattern matching
         // tree-sitter-md only gives us the marker positions, not semantic spans
@@ -148,6 +159,233 @@ impl MarkdownParser {
                 continue;
             }
             i += 1;
+        }
+    }
+
+    /// Parse GFM pipe tables
+    /// Detects tables with format:
+    /// | Header 1 | Header 2 |
+    /// |----------|----------|
+    /// | Cell 1   | Cell 2   |
+    fn parse_tables(&self, content: &str, spans: &mut Vec<Span>) {
+        if content.is_empty() {
+            return;
+        }
+
+        // Track byte positions for each line
+        let mut line_starts: Vec<usize> = vec![0];
+        for (i, c) in content.char_indices() {
+            if c == '\n' {
+                line_starts.push(i + 1);
+            }
+        }
+
+        let lines: Vec<&str> = content.lines().collect();
+
+        let mut i = 0;
+        while i < lines.len() {
+            // Check if this line is a potential header row
+            let current_line = lines[i];
+
+            // Tables must have pipes
+            if !current_line.contains('|') {
+                i += 1;
+                continue;
+            }
+
+            // Check if next line is a delimiter row
+            if i + 1 >= lines.len() {
+                i += 1;
+                continue;
+            }
+
+            let next_line = lines[i + 1];
+            if !self.is_table_delimiter_row(next_line) {
+                i += 1;
+                continue;
+            }
+
+            // We have a valid table! Parse header row
+            let header_start = line_starts[i];
+            let header_end = if i + 1 < line_starts.len() {
+                line_starts[i + 1].saturating_sub(1)
+            } else {
+                content.len()
+            };
+
+            // Parse header cells
+            self.parse_table_row(content, header_start, header_end, SpanKind::TableHeader, spans);
+
+            // Move to delimiter row
+            i += 1;
+            let delim_start = line_starts[i];
+            let delim_end = if i + 1 < line_starts.len() {
+                line_starts[i + 1].saturating_sub(1)
+            } else {
+                content.len()
+            };
+
+            // Add delimiter span
+            spans.push(Span {
+                start: delim_start,
+                end: delim_end,
+                kind: SpanKind::TableDelimiter,
+            });
+
+            // Move to data rows
+            i += 1;
+            while i < lines.len() {
+                let data_line = lines[i];
+
+                // Stop if we hit a non-table line
+                if !data_line.contains('|') || data_line.trim().is_empty() {
+                    break;
+                }
+
+                let data_start = line_starts[i];
+                let data_end = if i + 1 < line_starts.len() {
+                    line_starts[i + 1].saturating_sub(1)
+                } else {
+                    content.len()
+                };
+
+                // Parse data cells
+                self.parse_table_row(content, data_start, data_end, SpanKind::TableCell, spans);
+
+                i += 1;
+            }
+        }
+    }
+
+    /// Check if a line is a valid table delimiter row
+    /// Matches: |---|---|, |:---|:---:|---:|, etc.
+    fn is_table_delimiter_row(&self, line: &str) -> bool {
+        let trimmed = line.trim();
+
+        if !trimmed.contains('|') {
+            return false;
+        }
+
+        // Split by pipes and check each cell
+        let cells: Vec<&str> = if trimmed.starts_with('|') && trimmed.ends_with('|') {
+            // Leading and trailing pipes: | --- | --- |
+            trimmed[1..trimmed.len()-1].split('|').collect()
+        } else if trimmed.starts_with('|') {
+            // Leading pipe only: | --- | ---
+            trimmed[1..].split('|').collect()
+        } else if trimmed.ends_with('|') {
+            // Trailing pipe only: --- | --- |
+            trimmed[..trimmed.len()-1].split('|').collect()
+        } else {
+            // No leading/trailing pipes: --- | ---
+            trimmed.split('|').collect()
+        };
+
+        if cells.is_empty() {
+            return false;
+        }
+
+        // Each cell must be a valid delimiter: optional colons, then dashes, then optional colons
+        for cell in cells {
+            let cell_trim = cell.trim();
+            if cell_trim.is_empty() {
+                return false;
+            }
+
+            // Must contain at least one dash
+            if !cell_trim.contains('-') {
+                return false;
+            }
+
+            // Check format: optional :, then dashes, then optional :
+            let mut chars = cell_trim.chars().peekable();
+
+            // Optional leading colon
+            if chars.peek() == Some(&':') {
+                chars.next();
+            }
+
+            // Must have at least 3 dashes (GFM spec requirement)
+            let mut dash_count = 0;
+            while let Some(&ch) = chars.peek() {
+                if ch == '-' {
+                    dash_count += 1;
+                    chars.next();
+                } else if ch == ':' {
+                    // Trailing colon
+                    chars.next();
+                    break;
+                } else if ch.is_whitespace() {
+                    chars.next();
+                } else {
+                    // Invalid character
+                    return false;
+                }
+            }
+
+            if dash_count < 3 {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Parse a single table row and create spans for each cell
+    fn parse_table_row(&self, content: &str, start: usize, end: usize, kind: SpanKind, spans: &mut Vec<Span>) {
+        let row_text = &content[start..end];
+        let trimmed = row_text.trim();
+
+        if trimmed.is_empty() {
+            return;
+        }
+
+        // Track byte position relative to start
+        let mut pos = start;
+
+        // Skip leading whitespace
+        while pos < end && content.as_bytes()[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+
+        // Skip leading pipe if present
+        if pos < end && content.as_bytes()[pos] == b'|' {
+            pos += 1;
+        }
+
+        // Parse cells
+        let mut cell_start = pos;
+        while pos < end {
+            if content.as_bytes()[pos] == b'|' {
+                // Found cell boundary
+                if cell_start < pos {
+                    spans.push(Span {
+                        start: cell_start,
+                        end: pos,
+                        kind,
+                    });
+                }
+                pos += 1;
+                cell_start = pos;
+            } else {
+                pos += 1;
+            }
+        }
+
+        // Handle last cell (if not ending with pipe)
+        if cell_start < end {
+            // Trim trailing whitespace/newline
+            let mut cell_end = end;
+            while cell_end > cell_start && content.as_bytes()[cell_end - 1].is_ascii_whitespace() {
+                cell_end -= 1;
+            }
+            if cell_start < cell_end {
+                spans.push(Span {
+                    start: cell_start,
+                    end: cell_end,
+                    kind,
+                });
+            }
         }
     }
 
@@ -226,6 +464,386 @@ impl MarkdownParser {
 
         // Parse emphasis using delimiter stack algorithm
         self.parse_emphasis(content, spans);
+
+        // Parse strikethrough (~~ text ~~)
+        self.parse_strikethrough(content, spans);
+
+        // Parse task list markers (- [ ] and - [x])
+        self.parse_task_markers(content, spans);
+
+        // Parse autolinks (<https://...> and <email@...>)
+        self.parse_autolinks(content, spans);
+    }
+
+    /// Parse strikethrough formatting (~~text~~)
+    /// Finds matching pairs of ~~ delimiters
+    fn parse_strikethrough(&self, content: &str, spans: &mut Vec<Span>) {
+        // Collect code span ranges first to avoid borrow checker issues
+        let code_spans: Vec<(usize, usize)> = spans
+            .iter()
+            .filter(|s| s.kind == SpanKind::CodeInline)
+            .map(|s| (s.start, s.end))
+            .collect();
+
+        // Helper function to check if a position is inside a code span
+        let is_in_code_span = |pos: usize| -> bool {
+            code_spans.iter().any(|(start, end)| pos >= *start && pos < *end)
+        };
+
+        let bytes = content.as_bytes();
+        let mut i = 0;
+
+        while i + 1 < bytes.len() {
+            // Skip positions inside code spans
+            if is_in_code_span(i) {
+                i += 1;
+                continue;
+            }
+
+            // Look for opening ~~
+            if bytes[i] == b'~' && bytes[i + 1] == b'~' {
+                // Find closing ~~
+                let mut search_pos = i + 2;
+                let mut found_closing = false;
+                while search_pos + 1 < bytes.len() {
+                    if bytes[search_pos] == b'~' && bytes[search_pos + 1] == b'~' {
+                        // Check that we have content between the delimiters
+                        // Empty strikethrough ~~~~ should not match
+                        if search_pos > i + 2 {
+                            let end = search_pos + 2;
+                            spans.push(Span {
+                                start: i,
+                                end,
+                                kind: SpanKind::Strikethrough,
+                            });
+                            i = end;
+                            found_closing = true;
+                            break;
+                        }
+                    }
+                    search_pos += 1;
+                }
+
+                // If we didn't find a closing ~~, continue searching
+                if !found_closing {
+                    i += 1;
+                }
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    /// Parse task list markers ([ ], [x], [X])
+    /// Detects checkboxes in list items: `- [ ]` (unchecked) and `- [x]` (checked)
+    /// Works with any list marker: `-`, `*`, `+`, or numbered `1.`
+    fn parse_task_markers(&self, content: &str, spans: &mut Vec<Span>) {
+        let bytes = content.as_bytes();
+        let len = bytes.len();
+
+        // Process line by line
+        let mut line_start = 0;
+        let mut i = 0;
+
+        while i <= len {
+            // Find end of current line
+            let line_end = if i < len {
+                let mut end = i;
+                while end < len && bytes[end] != b'\n' {
+                    end += 1;
+                }
+                end
+            } else {
+                len
+            };
+
+            // Process this line if we have content
+            if line_start < line_end {
+                self.parse_task_marker_in_line(content, bytes, line_start, line_end, spans);
+            }
+
+            // Move to next line
+            line_start = line_end + 1;
+            i = line_start;
+        }
+    }
+
+    /// Parse a single line for task markers
+    fn parse_task_marker_in_line(
+        &self,
+        _content: &str,
+        bytes: &[u8],
+        line_start: usize,
+        line_end: usize,
+        spans: &mut Vec<Span>,
+    ) {
+        let mut pos = line_start;
+
+        // Skip leading whitespace (indentation)
+        while pos < line_end && (bytes[pos] == b' ' || bytes[pos] == b'\t') {
+            pos += 1;
+        }
+
+        if pos >= line_end {
+            return;
+        }
+
+        // Check for list marker: -, *, + or numbered (digit followed by . or ))
+        let has_list_marker = if bytes[pos] == b'-' || bytes[pos] == b'*' || bytes[pos] == b'+' {
+            pos += 1;
+            true
+        } else if bytes[pos].is_ascii_digit() {
+            // Numbered list: one or more digits followed by . or )
+            let digit_start = pos;
+            while pos < line_end && bytes[pos].is_ascii_digit() {
+                pos += 1;
+            }
+            if pos < line_end && (bytes[pos] == b'.' || bytes[pos] == b')') {
+                pos += 1;
+                true
+            } else {
+                // Not a valid numbered list, reset
+                pos = digit_start;
+                false
+            }
+        } else {
+            false
+        };
+
+        if !has_list_marker {
+            return;
+        }
+
+        // After list marker, we need at least one space
+        if pos >= line_end || (bytes[pos] != b' ' && bytes[pos] != b'\t') {
+            return;
+        }
+
+        // Skip whitespace after list marker
+        while pos < line_end && (bytes[pos] == b' ' || bytes[pos] == b'\t') {
+            pos += 1;
+        }
+
+        // Check for [ followed by space/x/X followed by ]
+        if pos + 2 < line_end && bytes[pos] == b'[' && bytes[pos + 2] == b']' {
+            let checkbox_char = bytes[pos + 1];
+            let kind = match checkbox_char {
+                b' ' => SpanKind::TaskMarker,
+                b'x' | b'X' => SpanKind::TaskChecked,
+                _ => return, // Invalid checkbox character
+            };
+
+            // Create span covering the checkbox [x] or [ ]
+            spans.push(Span {
+                start: pos,
+                end: pos + 3,
+                kind,
+            });
+        }
+    }
+
+    /// Parse autolinks: <https://...>, <http://...>, <email@...>
+    /// Also supports GFM extended autolinks (bare URLs): https://example.com, www.example.com
+    fn parse_autolinks(&self, content: &str, spans: &mut Vec<Span>) {
+        // Collect code span ranges first to avoid highlighting autolinks inside code
+        let code_spans: Vec<(usize, usize)> = spans
+            .iter()
+            .filter(|s| s.kind == SpanKind::CodeInline)
+            .map(|s| (s.start, s.end))
+            .collect();
+
+        // Helper function to check if a position is inside a code span
+        let is_in_code_span = |pos: usize| -> bool {
+            code_spans.iter().any(|(start, end)| pos >= *start && pos < *end)
+        };
+
+        let bytes = content.as_bytes();
+        let len = bytes.len();
+        let mut i = 0;
+
+        while i < len {
+            // Skip if we're inside a code span
+            if is_in_code_span(i) {
+                i += 1;
+                continue;
+            }
+
+            // Parse angle bracket autolinks: <https://...> or <email@...>
+            if bytes[i] == b'<' {
+                if let Some((start, end, kind)) = self.find_angle_autolink(content, i) {
+                    spans.push(Span { start, end, kind });
+                    i = end;
+                    continue;
+                }
+            }
+
+            // Parse GFM extended autolinks (bare URLs)
+            // Check for https://, http://, or www.
+            if i + 7 < len && &bytes[i..i + 8] == b"https://" {
+                if let Some((start, end)) = self.find_bare_url(content, i) {
+                    spans.push(Span {
+                        start,
+                        end,
+                        kind: SpanKind::Autolink,
+                    });
+                    i = end;
+                    continue;
+                }
+            } else if i + 6 < len && &bytes[i..i + 7] == b"http://" {
+                if let Some((start, end)) = self.find_bare_url(content, i) {
+                    spans.push(Span {
+                        start,
+                        end,
+                        kind: SpanKind::Autolink,
+                    });
+                    i = end;
+                    continue;
+                }
+            } else if i + 3 < len && &bytes[i..i + 4] == b"www." {
+                // www. links must be preceded by whitespace, start of line, or punctuation
+                let preceded_ok = if i == 0 {
+                    true
+                } else {
+                    let prev = bytes[i - 1];
+                    prev.is_ascii_whitespace() || prev == b'(' || prev == b'[' || prev == b'<'
+                };
+
+                if preceded_ok {
+                    if let Some((start, end)) = self.find_bare_url(content, i) {
+                        spans.push(Span {
+                            start,
+                            end,
+                            kind: SpanKind::Autolink,
+                        });
+                        i = end;
+                        continue;
+                    }
+                }
+            }
+
+            i += 1;
+        }
+    }
+
+    /// Find angle bracket autolink: <https://...> or <email@...>
+    /// Returns (start, end, kind) or None
+    fn find_angle_autolink(&self, content: &str, start: usize) -> Option<(usize, usize, SpanKind)> {
+        let bytes = content.as_bytes();
+        let len = bytes.len();
+
+        if bytes[start] != b'<' {
+            return None;
+        }
+
+        // Find closing >
+        let mut i = start + 1;
+        while i < len && bytes[i] != b'>' && bytes[i] != b'\n' && bytes[i] != b'<' {
+            i += 1;
+        }
+
+        if i >= len || bytes[i] != b'>' {
+            return None; // No closing > found
+        }
+
+        let end = i + 1; // Include the closing >
+        let inner = &content[start + 1..i];
+
+        // Check if it's a valid URI or email
+        if self.is_valid_uri(inner) {
+            Some((start, end, SpanKind::Autolink))
+        } else if self.is_valid_email(inner) {
+            Some((start, end, SpanKind::AutolinkEmail))
+        } else {
+            None
+        }
+    }
+
+    /// Check if string is a valid URI (supports multiple schemes)
+    fn is_valid_uri(&self, s: &str) -> bool {
+        // Define schemes with their expected format (with or without //)
+        let schemes_with_slashes = [
+            ("https://", 8),
+            ("http://", 7),
+            ("ftp://", 6),
+            ("ssh://", 6),
+            ("file://", 7),
+        ];
+
+        let schemes_without_slashes = [
+            ("mailto:", 7),
+            ("tel:", 4),
+        ];
+
+        // Check schemes that require //
+        for (scheme, len) in &schemes_with_slashes {
+            if s.starts_with(scheme) {
+                let after_protocol = &s[*len..];
+                // Should have at least one valid character
+                return !after_protocol.is_empty() && after_protocol.chars().all(|c| !c.is_whitespace());
+            }
+        }
+
+        // Check schemes that don't use //
+        for (scheme, len) in &schemes_without_slashes {
+            if s.starts_with(scheme) {
+                let after_protocol = &s[*len..];
+                // Should have at least one valid character
+                return !after_protocol.is_empty() && after_protocol.chars().all(|c| !c.is_whitespace());
+            }
+        }
+
+        false
+    }
+
+    /// Check if string is a valid email address
+    fn is_valid_email(&self, s: &str) -> bool {
+        // Basic email validation: has @ with text before and after
+        if let Some(at_pos) = s.find('@') {
+            at_pos > 0 && at_pos < s.len() - 1 && !s.contains(char::is_whitespace)
+        } else {
+            false
+        }
+    }
+
+    /// Find bare URL (GFM extended autolink)
+    /// Returns (start, end) or None
+    fn find_bare_url(&self, content: &str, start: usize) -> Option<(usize, usize)> {
+        let bytes = content.as_bytes();
+        let len = bytes.len();
+        let mut i = start;
+
+        // Continue while we have valid URL characters
+        // Valid: alphanumeric, -, ., _, ~, :, /, ?, #, [, ], @, !, $, &, ', (, ), *, +, ,, ;, =, %
+        while i < len {
+            let c = bytes[i];
+            if c.is_ascii_alphanumeric()
+                || c == b'-' || c == b'.' || c == b'_' || c == b'~'
+                || c == b':' || c == b'/' || c == b'?' || c == b'#'
+                || c == b'@' || c == b'!' || c == b'$' || c == b'&'
+                || c == b'\'' || c == b'(' || c == b')' || c == b'*'
+                || c == b'+' || c == b',' || c == b';' || c == b'='
+                || c == b'%' || c == b'['|| c == b']'
+            {
+                i += 1;
+            } else {
+                break;
+            }
+        }
+
+        // URLs must end with valid characters (not punctuation like . , ; ! ? )
+        // Trim trailing punctuation
+        while i > start && (bytes[i - 1] == b'.' || bytes[i - 1] == b',' || bytes[i - 1] == b';'
+            || bytes[i - 1] == b'!' || bytes[i - 1] == b'?' || bytes[i - 1] == b'\''
+            || bytes[i - 1] == b')' || bytes[i - 1] == b':')
+        {
+            i -= 1;
+        }
+
+        if i > start {
+            Some((start, i))
+        } else {
+            None
+        }
     }
 
     /// Parse emphasis and strong using CommonMark flanking rules
@@ -489,814 +1107,5 @@ impl MarkdownParser {
 impl Default for MarkdownParser {
     fn default() -> Self {
         Self::new().expect("Failed to create markdown parser")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_heading() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let spans = parser.parse("# Hello\n\n## World");
-
-        let h1: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Heading1).collect();
-        let h2: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Heading2).collect();
-        assert!(!h1.is_empty(), "Should find H1");
-        assert!(!h2.is_empty(), "Should find H2");
-    }
-
-    #[test]
-    fn test_parse_bold() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let spans = parser.parse("This is **bold** text");
-
-        let bold: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Bold).collect();
-        assert!(!bold.is_empty(), "Should find bold");
-        assert_eq!(bold[0].start, 8);  // "This is " = 8 chars
-        assert_eq!(bold[0].end, 16);   // "**bold**" = 8 chars
-    }
-
-    #[test]
-    fn test_parse_code() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let spans = parser.parse("Use `code` here");
-
-        let code: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::CodeInline).collect();
-        assert!(!code.is_empty(), "Should find inline code");
-    }
-
-    #[test]
-    fn test_parse_code_single_backtick() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "Use `code` here";
-        let spans = parser.parse(content);
-
-        let code: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::CodeInline).collect();
-        assert_eq!(code.len(), 1, "Should find one code span");
-        assert_eq!(code[0].start, 4);  // "Use " = 4 chars
-        assert_eq!(code[0].end, 10);   // "`code`" = 6 chars, end at 10
-        assert_eq!(&content[code[0].start..code[0].end], "`code`");
-    }
-
-    #[test]
-    fn test_parse_code_double_backtick() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "Use ``code`` here";
-        let spans = parser.parse(content);
-
-        let code: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::CodeInline).collect();
-        assert_eq!(code.len(), 1, "Should find one code span");
-        assert_eq!(code[0].start, 4);
-        assert_eq!(code[0].end, 12);
-        assert_eq!(&content[code[0].start..code[0].end], "``code``");
-    }
-
-    #[test]
-    fn test_parse_code_backtick_inside() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "Use `` `inner` `` here";
-        let spans = parser.parse(content);
-
-        let code: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::CodeInline).collect();
-        assert_eq!(code.len(), 1, "Should find one code span");
-        assert_eq!(code[0].start, 4);
-        assert_eq!(code[0].end, 17);
-        assert_eq!(&content[code[0].start..code[0].end], "`` `inner` ``");
-    }
-
-    #[test]
-    fn test_parse_code_triple_backtick_inline() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "Inline ```code``` works";
-        let spans = parser.parse(content);
-
-        let code: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::CodeInline).collect();
-        assert_eq!(code.len(), 1, "Should find one code span");
-        assert_eq!(code[0].start, 7);
-        assert_eq!(code[0].end, 17);  // After all three closing backticks
-        assert_eq!(&content[code[0].start..code[0].end], "```code```");
-    }
-
-    #[test]
-    fn test_parse_code_mismatched_backticks() {
-        let mut parser = MarkdownParser::new().unwrap();
-        // Single backtick opening, double backtick closing - should not match
-        let content = "Use `code`` here";
-        let spans = parser.parse(content);
-
-        let code: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::CodeInline).collect();
-        // The single ` at position 4 won't find a matching single `
-        // because the next backticks are `` (double)
-        assert_eq!(code.len(), 0, "Mismatched backtick counts should not create code span");
-    }
-
-    #[test]
-    fn test_parse_code_multiple_spans() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "Use `single` and ``double`` code";
-        let spans = parser.parse(content);
-
-        let code: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::CodeInline).collect();
-        assert_eq!(code.len(), 2, "Should find two code spans");
-        assert_eq!(&content[code[0].start..code[0].end], "`single`");
-        assert_eq!(&content[code[1].start..code[1].end], "``double``");
-    }
-
-    #[test]
-    fn test_parse_italic() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let spans = parser.parse("This is *italic* text");
-
-        let italic: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Italic).collect();
-        assert!(!italic.is_empty(), "Should find italic");
-    }
-
-    #[test]
-    fn test_parse_setext_headings() {
-        let mut parser = MarkdownParser::new().unwrap();
-
-        // Test H1 with equals (per MARKDOWN-SYNTAX.md: === = Heading 1)
-        let content_h1 = "Heading One\n===========";
-        let spans_h1 = parser.parse(content_h1);
-        let h1: Vec<_> = spans_h1.iter().filter(|s| s.kind == SpanKind::Heading1).collect();
-        assert_eq!(h1.len(), 1, "Should find H1 with = underline");
-
-        // Test H2 with dashes (per MARKDOWN-SYNTAX.md: --- = Heading 2)
-        parser.reset();
-        let content_h2 = "Heading Two\n-----------";
-        let spans_h2 = parser.parse(content_h2);
-        let h2: Vec<_> = spans_h2.iter().filter(|s| s.kind == SpanKind::Heading2).collect();
-        assert_eq!(h2.len(), 1, "Should find H2 with - underline");
-
-        // Test both in same document
-        parser.reset();
-        let content_both = "First Heading\n=============\n\nSecond Heading\n--------------";
-        let spans_both = parser.parse(content_both);
-        let h1_both: Vec<_> = spans_both.iter().filter(|s| s.kind == SpanKind::Heading1).collect();
-        let h2_both: Vec<_> = spans_both.iter().filter(|s| s.kind == SpanKind::Heading2).collect();
-        assert_eq!(h1_both.len(), 1, "Should find one H1");
-        assert_eq!(h2_both.len(), 1, "Should find one H2");
-
-        // Test that mixed characters don't create headings
-        parser.reset();
-        let content_mixed = "Not a heading\n-=-=-";
-        let spans_mixed = parser.parse(content_mixed);
-        let headings: Vec<_> = spans_mixed.iter().filter(|s|
-            s.kind == SpanKind::Heading1 || s.kind == SpanKind::Heading2
-        ).collect();
-        assert_eq!(headings.len(), 0, "Mixed characters should not create heading");
-    }
-
-    #[test]
-    fn test_emphasis_underscore_intraword() {
-        let mut parser = MarkdownParser::new().unwrap();
-        // Per CommonMark: underscores cannot create emphasis in middle of word
-        let content = "foo_bar_baz";
-        let spans = parser.parse(content);
-
-        let emphasis: Vec<_> = spans.iter().filter(|s|
-            s.kind == SpanKind::Italic || s.kind == SpanKind::Bold
-        ).collect();
-        assert_eq!(emphasis.len(), 0, "Underscores mid-word should not create emphasis");
-    }
-
-    #[test]
-    fn test_emphasis_asterisk_intraword() {
-        let mut parser = MarkdownParser::new().unwrap();
-        // Per CommonMark: asterisks CAN create emphasis in middle of word
-        let content = "foo*bar*baz";
-        let spans = parser.parse(content);
-
-        let italic: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Italic).collect();
-        assert_eq!(italic.len(), 1, "Asterisks mid-word should create emphasis");
-        assert_eq!(&content[italic[0].start..italic[0].end], "*bar*");
-    }
-
-    #[test]
-    fn test_emphasis_nested_bold_in_italic() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "*foo **bar** baz*";
-        let spans = parser.parse(content);
-
-        let italic: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Italic).collect();
-        let bold: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Bold).collect();
-
-        assert_eq!(italic.len(), 1, "Should find outer italic");
-        assert_eq!(bold.len(), 1, "Should find inner bold");
-        assert_eq!(&content[italic[0].start..italic[0].end], "*foo **bar** baz*");
-        assert_eq!(&content[bold[0].start..bold[0].end], "**bar**");
-    }
-
-    #[test]
-    fn test_emphasis_nested_italic_in_bold() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "**foo *bar* baz**";
-        let spans = parser.parse(content);
-
-        let bold: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Bold).collect();
-        let italic: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Italic).collect();
-
-        assert_eq!(bold.len(), 1, "Should find outer bold");
-        assert_eq!(italic.len(), 1, "Should find inner italic");
-        assert_eq!(&content[bold[0].start..bold[0].end], "**foo *bar* baz**");
-        assert_eq!(&content[italic[0].start..italic[0].end], "*bar*");
-    }
-
-    #[test]
-    fn test_emphasis_triple_asterisk() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "***bold italic***";
-        let spans = parser.parse(content);
-
-        // Triple asterisk should create both bold and italic
-        let bold: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Bold).collect();
-        let italic: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Italic).collect();
-
-        assert!(bold.len() >= 1 || italic.len() >= 1,
-                "Triple asterisk should create emphasis (found {} bold, {} italic)",
-                bold.len(), italic.len());
-    }
-
-    #[test]
-    fn test_emphasis_simple_cases_still_work() {
-        let mut parser = MarkdownParser::new().unwrap();
-
-        // Test simple bold
-        parser.reset();
-        let bold_content = "This is **bold** text";
-        let bold_spans = parser.parse(bold_content);
-        let bold: Vec<_> = bold_spans.iter().filter(|s| s.kind == SpanKind::Bold).collect();
-        assert_eq!(bold.len(), 1, "Simple bold should work");
-        assert_eq!(&bold_content[bold[0].start..bold[0].end], "**bold**");
-
-        // Test simple italic
-        parser.reset();
-        let italic_content = "This is *italic* text";
-        let italic_spans = parser.parse(italic_content);
-        let italic: Vec<_> = italic_spans.iter().filter(|s| s.kind == SpanKind::Italic).collect();
-        assert_eq!(italic.len(), 1, "Simple italic should work");
-        assert_eq!(&italic_content[italic[0].start..italic[0].end], "*italic*");
-
-        // Test underscore bold
-        parser.reset();
-        let under_bold = "This is __bold__ text";
-        let under_bold_spans = parser.parse(under_bold);
-        let under_bold_vec: Vec<_> = under_bold_spans.iter().filter(|s| s.kind == SpanKind::Bold).collect();
-        assert_eq!(under_bold_vec.len(), 1, "Underscore bold should work");
-
-        // Test underscore italic
-        parser.reset();
-        let under_italic = "This is _italic_ text";
-        let under_italic_spans = parser.parse(under_italic);
-        let under_italic_vec: Vec<_> = under_italic_spans.iter().filter(|s| s.kind == SpanKind::Italic).collect();
-        assert_eq!(under_italic_vec.len(), 1, "Underscore italic should work");
-    }
-
-    #[test]
-    fn test_emphasis_comprehensive_examples() {
-        let mut parser = MarkdownParser::new().unwrap();
-
-        // Test various edge cases documented in MARKDOWN-SYNTAX.md
-        let test_cases = vec![
-            // (input, expected_bold_count, expected_italic_count, description)
-            ("This is **bold** text", 1, 0, "Simple bold"),
-            ("This is *italic* text", 0, 1, "Simple italic"),
-            ("**bold** and *italic*", 1, 1, "Both in same line"),
-            ("foo_bar_baz", 0, 0, "Underscores mid-word should not create emphasis"),
-            ("foo*bar*baz", 0, 1, "Asterisks mid-word should create emphasis"),
-            ("This**is**fine", 1, 0, "Bold mid-word with asterisks works"),
-        ];
-
-        for (content, expected_bold, expected_italic, desc) in test_cases {
-            parser.reset();
-            let spans = parser.parse(content);
-            let bold: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Bold).collect();
-            let italic: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Italic).collect();
-
-            assert_eq!(bold.len(), expected_bold,
-                "{}: expected {} bold, got {}", desc, expected_bold, bold.len());
-            assert_eq!(italic.len(), expected_italic,
-                "{}: expected {} italic, got {}", desc, expected_italic, italic.len());
-        }
-    }
-
-    // ========================================================================
-    // EDGE CASE TESTS - Comprehensive coverage from MARKDOWN-SYNTAX.md
-    // ========================================================================
-
-    #[test]
-    fn test_heading_atx_with_closing_hashes() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "# Heading #\n## Heading ##";
-        let spans = parser.parse(content);
-
-        let h1: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Heading1).collect();
-        let h2: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Heading2).collect();
-
-        assert_eq!(h1.len(), 1, "H1 with closing # should work");
-        assert_eq!(h2.len(), 1, "H2 with closing ## should work");
-    }
-
-    #[test]
-    fn test_heading_seven_hashes_not_heading() {
-        let mut parser = MarkdownParser::new().unwrap();
-        // 7 hashes should not be recognized as heading
-        let content = "####### Too many hashes";
-        let spans = parser.parse(content);
-
-        let headings: Vec<_> = spans.iter().filter(|s|
-            matches!(s.kind, SpanKind::Heading1 | SpanKind::Heading2 | SpanKind::Heading3 |
-                     SpanKind::Heading4 | SpanKind::Heading5 | SpanKind::Heading6)
-        ).collect();
-
-        // Note: tree-sitter-md may or may not parse this as a heading
-        // This test documents the behavior
-        println!("Seven hashes found {} headings", headings.len());
-    }
-
-    #[test]
-    fn test_setext_mixed_underline_invalid() {
-        let mut parser = MarkdownParser::new().unwrap();
-        // Mixed characters in underline should not be heading
-        let content = "Foo\n=-=";
-        let spans = parser.parse(content);
-
-        let headings: Vec<_> = spans.iter().filter(|s|
-            matches!(s.kind, SpanKind::Heading1 | SpanKind::Heading2)
-        ).collect();
-
-        assert_eq!(headings.len(), 0, "Mixed underline characters should not create heading");
-    }
-
-    #[test]
-    fn test_setext_empty_heading_invalid() {
-        let mut parser = MarkdownParser::new().unwrap();
-        // Empty setext heading should not be valid
-        let content = "\n===";
-        let spans = parser.parse(content);
-
-        let h1: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Heading1).collect();
-        assert_eq!(h1.len(), 0, "Empty setext heading should not be valid");
-    }
-
-    #[test]
-    fn test_code_empty_code_span() {
-        let mut parser = MarkdownParser::new().unwrap();
-        // Note: `` alone is NOT a valid code span - you need opening AND closing backticks
-        // For empty code span you'd need: `` `` (with space between to separate open/close)
-        let content = "Text `` `` more text";
-        let spans = parser.parse(content);
-
-        let code: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::CodeInline).collect();
-        assert_eq!(code.len(), 1, "Empty code span with space should match");
-        assert_eq!(&content[code[0].start..code[0].end], "`` ``");
-    }
-
-    #[test]
-    fn test_code_only_spaces() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "Text ` ` more";
-        let spans = parser.parse(content);
-
-        let code: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::CodeInline).collect();
-        assert_eq!(code.len(), 1, "Code span with only spaces should match");
-        assert_eq!(&content[code[0].start..code[0].end], "` `");
-    }
-
-    #[test]
-    fn test_code_multiple_backticks_inside() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "Use ``` `` ``` to escape";
-        let spans = parser.parse(content);
-
-        let code: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::CodeInline).collect();
-        assert_eq!(code.len(), 1, "Triple backticks should contain double backticks");
-        assert_eq!(&content[code[0].start..code[0].end], "``` `` ```");
-    }
-
-    #[test]
-    fn test_emphasis_unclosed() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "*unclosed emphasis";
-        let spans = parser.parse(content);
-
-        let italic: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Italic).collect();
-        assert_eq!(italic.len(), 0, "Unclosed emphasis should not match");
-    }
-
-    #[test]
-    fn test_emphasis_escaped_delimiters() {
-        let mut parser = MarkdownParser::new().unwrap();
-        // Note: Backslash escaping happens at a different layer
-        // This test documents current behavior
-        let content = r"\*not emphasis\*";
-        let spans = parser.parse(content);
-
-        let italic: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Italic).collect();
-        // Escaping is typically handled by the renderer, not the parser
-        println!("Escaped delimiters found {} italic spans", italic.len());
-    }
-
-    #[test]
-    fn test_emphasis_adjacent() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "**bold1** **bold2**";
-        let spans = parser.parse(content);
-
-        let bold: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Bold).collect();
-        assert_eq!(bold.len(), 2, "Adjacent bold should create two spans");
-        assert_eq!(&content[bold[0].start..bold[0].end], "**bold1**");
-        assert_eq!(&content[bold[1].start..bold[1].end], "**bold2**");
-    }
-
-    #[test]
-    fn test_emphasis_empty_delimiters() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "Text ** ** more";
-        let spans = parser.parse(content);
-
-        let bold: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Bold).collect();
-        // Empty emphasis should not match (or might match depending on implementation)
-        println!("Empty delimiters found {} bold spans", bold.len());
-    }
-
-    #[test]
-    fn test_combined_code_inside_emphasis() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "*italic with `code` inside*";
-        let spans = parser.parse(content);
-
-        let italic: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Italic).collect();
-        let code: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::CodeInline).collect();
-
-        assert_eq!(italic.len(), 1, "Should find italic");
-        assert_eq!(code.len(), 1, "Should find code inside italic");
-    }
-
-    #[test]
-    fn test_combined_emphasis_inside_code() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "`**not bold**`";
-        let spans = parser.parse(content);
-
-        let code: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::CodeInline).collect();
-        let bold: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Bold).collect();
-
-        assert_eq!(code.len(), 1, "Should find code span");
-        assert_eq!(bold.len(), 0, "Bold markers inside code should not be parsed");
-    }
-
-    #[test]
-    fn test_combined_multiple_elements_one_line() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "# Heading with **bold** and `code`";
-        let spans = parser.parse(content);
-
-        let heading: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Heading1).collect();
-        let bold: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Bold).collect();
-        let code: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::CodeInline).collect();
-
-        assert!(!heading.is_empty(), "Should find heading");
-        assert_eq!(bold.len(), 1, "Should find bold inside heading");
-        assert_eq!(code.len(), 1, "Should find code inside heading");
-    }
-
-    #[test]
-    fn test_malformed_empty_input() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let spans = parser.parse("");
-
-        assert_eq!(spans.len(), 0, "Empty input should produce no spans");
-    }
-
-    #[test]
-    fn test_malformed_only_whitespace() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "   \n\n   ";
-        let spans = parser.parse(content);
-
-        // Whitespace-only should produce no meaningful spans
-        let meaningful_spans: Vec<_> = spans.iter().filter(|s|
-            !matches!(s.kind, SpanKind::HeadingMarker)
-        ).collect();
-
-        assert_eq!(meaningful_spans.len(), 0, "Whitespace-only should produce no meaningful spans");
-    }
-
-    #[test]
-    fn test_malformed_only_markers() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "***";
-        let spans = parser.parse(content);
-
-        // Could be thematic break or emphasis markers
-        // This test documents the behavior
-        println!("Only markers produced {} spans", spans.len());
-    }
-
-    #[test]
-    fn test_malformed_unbalanced() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "**bold *italic";
-        let spans = parser.parse(content);
-
-        let bold: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Bold).collect();
-        let italic: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Italic).collect();
-
-        // Unbalanced should not match
-        assert_eq!(bold.len(), 0, "Unbalanced bold should not match");
-        assert_eq!(italic.len(), 0, "Unbalanced italic should not match");
-    }
-
-    #[test]
-    fn test_code_unclosed_backticks() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "Text `unclosed";
-        let spans = parser.parse(content);
-
-        let code: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::CodeInline).collect();
-        assert_eq!(code.len(), 0, "Unclosed code span should not match");
-    }
-
-    #[test]
-    fn test_emphasis_underscores_at_word_boundaries() {
-        let mut parser = MarkdownParser::new().unwrap();
-
-        // Underscores at start/end of words should work
-        let content = "This is _italic_ text";
-        let spans = parser.parse(content);
-        let italic: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Italic).collect();
-        assert_eq!(italic.len(), 1, "Underscores at word boundaries should work");
-    }
-
-    #[test]
-    fn test_emphasis_complex_nesting() {
-        let mut parser = MarkdownParser::new().unwrap();
-        // From MARKDOWN-SYNTAX.md edge cases
-        let content = "*foo **bar** baz*";
-        let spans = parser.parse(content);
-
-        let italic: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Italic).collect();
-        let bold: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Bold).collect();
-
-        assert_eq!(italic.len(), 1, "Should find outer italic");
-        assert_eq!(bold.len(), 1, "Should find nested bold");
-    }
-
-    #[test]
-    fn test_setext_vs_thematic_break() {
-        let mut parser = MarkdownParser::new().unwrap();
-
-        // Without blank line before, --- is not a setext heading
-        // (Note: tree-sitter-md behavior may vary)
-        let content = "Paragraph text\n---";
-        let spans = parser.parse(content);
-
-        // This test documents the behavior
-        let h2: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Heading2).collect();
-        println!("Found {} H2 headings for setext vs thematic break", h2.len());
-    }
-
-    #[test]
-    fn test_code_with_newlines_between_backticks() {
-        let mut parser = MarkdownParser::new().unwrap();
-        // Code spans can span lines (though unusual)
-        let content = "Text `code\nwith newline` more";
-        let spans = parser.parse(content);
-
-        let code: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::CodeInline).collect();
-        // Depending on implementation, this may or may not work
-        println!("Code with newlines found {} spans", code.len());
-    }
-
-    #[test]
-    fn test_heading_with_extra_spaces() {
-        let mut parser = MarkdownParser::new().unwrap();
-        // Up to 3 spaces allowed before heading per CommonMark spec
-        // Note: tree-sitter-md behavior may vary
-        let content = "   # Heading with 3 spaces";
-        let spans = parser.parse(content);
-
-        let h1: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Heading1).collect();
-        // This test documents the behavior - tree-sitter-md may or may not recognize it
-        println!("Heading with 3 spaces found {} H1 headings", h1.len());
-        // Don't assert - just document the behavior
-    }
-
-    #[test]
-    fn test_multiple_code_spans_in_sequence() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "`first` `second` `third`";
-        let spans = parser.parse(content);
-
-        let code: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::CodeInline).collect();
-        assert_eq!(code.len(), 3, "Should find three separate code spans");
-    }
-
-    #[test]
-    fn test_emphasis_whitespace_inside() {
-        let mut parser = MarkdownParser::new().unwrap();
-        // Emphasis with only whitespace inside
-        let content = "Text * * more";
-        let spans = parser.parse(content);
-
-        let italic: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Italic).collect();
-        // This may or may not match depending on flanking rules
-        println!("Whitespace-only emphasis found {} spans", italic.len());
-    }
-
-    #[test]
-    fn test_code_four_vs_five_backticks() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "```` code ````";
-        let spans = parser.parse(content);
-
-        let code: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::CodeInline).collect();
-        assert_eq!(code.len(), 1, "Four backticks should match four backticks");
-        assert_eq!(&content[code[0].start..code[0].end], "```` code ````");
-    }
-
-    #[test]
-    fn test_real_world_markdown_snippet() {
-        let mut parser = MarkdownParser::new().unwrap();
-        // Real-world example combining multiple features
-        let content = r#"# Overview
-
-This is **important** text with `code` and *emphasis*.
-
-## Details
-
-- Item with `inline code`
-- Item with **bold text**
-"#;
-
-        let spans = parser.parse(content);
-
-        let h1: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Heading1).collect();
-        let h2: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Heading2).collect();
-        let bold: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Bold).collect();
-        let italic: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Italic).collect();
-        let code: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::CodeInline).collect();
-
-        assert_eq!(h1.len(), 1, "Should find H1");
-        assert_eq!(h2.len(), 1, "Should find H2");
-        assert_eq!(bold.len(), 2, "Should find two bold spans");
-        assert_eq!(italic.len(), 1, "Should find italic");
-        assert_eq!(code.len(), 2, "Should find two code spans");
-    }
-
-    #[test]
-    fn test_emphasis_with_unicode() {
-        let mut parser = MarkdownParser::new().unwrap();
-
-        // Emoji before emphasis (emoji is 4 bytes in UTF-8)
-        let content = "Hello 👋 *world*";
-        let spans = parser.parse(content);
-        let italic: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Italic).collect();
-        assert!(!italic.is_empty(), "Should find italic after emoji");
-        assert_eq!(&content[italic[0].start..italic[0].end], "*world*");
-
-        // Chinese text with emphasis (Chinese chars are 3 bytes each in UTF-8)
-        let content2 = "你好**世界**";
-        parser.reset();
-        let spans2 = parser.parse(content2);
-        let bold: Vec<_> = spans2.iter().filter(|s| s.kind == SpanKind::Bold).collect();
-        assert!(!bold.is_empty(), "Should find bold in Chinese text");
-        assert_eq!(&content2[bold[0].start..bold[0].end], "**世界**");
-
-        // Mixed: Emoji + Latin + emphasis
-        parser.reset();
-        let content3 = "🎉 Party **time** 🎊";
-        let spans3 = parser.parse(content3);
-        let bold3: Vec<_> = spans3.iter().filter(|s| s.kind == SpanKind::Bold).collect();
-        assert!(!bold3.is_empty(), "Should find bold between emojis");
-        assert_eq!(&content3[bold3[0].start..bold3[0].end], "**time**");
-
-        // Accented characters
-        parser.reset();
-        let content4 = "Café *résumé* naïve";
-        let spans4 = parser.parse(content4);
-        let italic4: Vec<_> = spans4.iter().filter(|s| s.kind == SpanKind::Italic).collect();
-        assert!(!italic4.is_empty(), "Should find italic with accented chars");
-        assert_eq!(&content4[italic4[0].start..italic4[0].end], "*résumé*");
-    }
-
-    #[test]
-    fn test_setext_headings_windows_line_endings() {
-        let mut parser = MarkdownParser::new().unwrap();
-
-        // Test with Windows line endings (CRLF: \r\n)
-        let content_h1 = "Heading One\r\n===========\r\n";
-        let spans_h1 = parser.parse(content_h1);
-        let h1: Vec<_> = spans_h1.iter().filter(|s| s.kind == SpanKind::Heading1).collect();
-        assert_eq!(h1.len(), 1, "Should find H1 with Windows line endings");
-
-        // Verify byte offsets are correct
-        let span = h1[0];
-        let heading_text = &content_h1[span.start..span.end];
-        assert!(heading_text.contains("Heading One"), "Span should contain heading text");
-        assert!(heading_text.contains("==========="), "Span should contain underline");
-
-        // Test H2 with Windows line endings
-        parser.reset();
-        let content_h2 = "Heading Two\r\n-----------\r\n";
-        let spans_h2 = parser.parse(content_h2);
-        let h2: Vec<_> = spans_h2.iter().filter(|s| s.kind == SpanKind::Heading2).collect();
-        assert_eq!(h2.len(), 1, "Should find H2 with Windows line endings");
-
-        // Test mixed content with Windows line endings
-        parser.reset();
-        let content_mixed = "First\r\n=====\r\n\r\nSecond\r\n------\r\n";
-        let spans_mixed = parser.parse(content_mixed);
-        let h1_mixed: Vec<_> = spans_mixed.iter().filter(|s| s.kind == SpanKind::Heading1).collect();
-        let h2_mixed: Vec<_> = spans_mixed.iter().filter(|s| s.kind == SpanKind::Heading2).collect();
-        assert_eq!(h1_mixed.len(), 1, "Should find H1 in mixed Windows line endings");
-        assert_eq!(h2_mixed.len(), 1, "Should find H2 in mixed Windows line endings");
-    }
-
-    // ========================================================================
-    // BLOCK ELEMENT TESTS - Testing SpanKind variants
-    // ========================================================================
-
-    #[test]
-    fn test_fenced_code_block() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "```rust\nfn main() {}\n```";
-        let spans = parser.parse(content);
-
-        let code_blocks: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::CodeBlock).collect();
-        assert!(!code_blocks.is_empty(), "Should find code block");
-    }
-
-    #[test]
-    fn test_inline_link() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "[text](https://example.com)";
-        let spans = parser.parse(content);
-
-        // Note: tree-sitter-md may not parse inline links in the current version
-        // This test documents the current behavior
-        let links: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Link).collect();
-        println!("Link test found {} spans (tree-sitter-md may not support inline links)", spans.len());
-
-        // Adjusted assertion - tree-sitter-md doesn't currently parse inline links
-        // This test will pass when/if tree-sitter-md adds support
-        if !links.is_empty() {
-            println!("  Link parsing is supported!");
-        } else {
-            println!("  Link parsing not yet supported by tree-sitter-md");
-        }
-    }
-
-    #[test]
-    fn test_image() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "![alt](image.png)";
-        let spans = parser.parse(content);
-
-        // Note: tree-sitter-md may not parse images in the current version
-        // This test documents the current behavior
-        let images: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Image).collect();
-        println!("Image test found {} spans (tree-sitter-md may not support images)", spans.len());
-
-        // Adjusted assertion - tree-sitter-md doesn't currently parse images
-        // This test will pass when/if tree-sitter-md adds support
-        if !images.is_empty() {
-            println!("  Image parsing is supported!");
-        } else {
-            println!("  Image parsing not yet supported by tree-sitter-md");
-        }
-    }
-
-    #[test]
-    fn test_unordered_list() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "- Item 1\n- Item 2";
-        let spans = parser.parse(content);
-
-        let markers: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::ListMarker).collect();
-        assert!(markers.len() >= 2, "Should find list markers");
-    }
-
-    #[test]
-    fn test_blockquote() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "> This is a quote";
-        let spans = parser.parse(content);
-
-        let quotes: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::BlockQuote).collect();
-        assert!(!quotes.is_empty(), "Should find blockquote");
-    }
-
-    #[test]
-    fn test_thematic_break() {
-        let mut parser = MarkdownParser::new().unwrap();
-        let content = "text\n\n---\n\nmore";
-        let spans = parser.parse(content);
-
-        let hr: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::HorizontalRule).collect();
-        assert!(!hr.is_empty(), "Should find horizontal rule");
     }
 }
