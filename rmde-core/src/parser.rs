@@ -66,12 +66,32 @@ pub enum SpanKind {
 
     // Other
     Emphasis = 70,  // Generic emphasis marker (* or _)
+
+    // Extended Syntax (Phase 4)
+    FootnoteRef = 80,      // [^1]
+    FootnoteDef = 81,      // [^1]: definition
+    MathInline = 82,       // $...$
+    MathBlock = 83,        // $$...$$
+    Highlight = 84,        // ==text==
+
+    // Markers (for ghost mode - these are the hidden characters)
+    MarkerHeading = 100,       // # characters
+    MarkerBold = 101,          // ** or __
+    MarkerItalic = 102,        // * or _
+    MarkerStrikethrough = 104, // ~~
+    MarkerCode = 105,          // ` characters
+    MarkerLink = 107,          // [ ] ( )
+    MarkerImage = 108,         // ! [ ] ( )
+    MarkerListBullet = 109,    // - * +
+    MarkerListNumber = 110,    // 1. 2) etc
+    MarkerTaskBox = 112,       // [ ] or [x]
 }
 
 /// Markdown parser with cached tree-sitter state
 pub struct MarkdownParser {
     parser: Parser,
     tree: Option<Tree>,
+    last_content_hash: u64,  // Quick change detection
 }
 
 impl MarkdownParser {
@@ -79,15 +99,44 @@ impl MarkdownParser {
     pub fn new() -> Option<Self> {
         let mut parser = Parser::new();
         parser.set_language(&tree_sitter_md::LANGUAGE.into()).ok()?;
-        Some(Self { parser, tree: None })
+        Some(Self {
+            parser,
+            tree: None,
+            last_content_hash: 0,
+        })
+    }
+
+    /// Simple hash function for change detection
+    /// Uses FNV-1a hash for speed
+    fn hash_content(content: &str) -> u64 {
+        let mut hash: u64 = 0xcbf29ce484222325;
+        for byte in content.as_bytes() {
+            hash ^= *byte as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        hash
     }
 
     /// Parse content and return highlight spans
     /// Takes &str directly - no copying
+    /// Automatically uses incremental parsing when possible
     pub fn parse(&mut self, content: &str) -> Vec<Span> {
-        let tree = match self.parser.parse(content, self.tree.as_ref()) {
-            Some(t) => t,
-            None => return Vec::new(),
+        // Calculate hash for change detection
+        let content_hash = Self::hash_content(content);
+
+        // Use incremental parsing if content is similar
+        let tree = if self.last_content_hash != 0 && self.tree.is_some() {
+            // Incremental parsing - reuse previous tree
+            match self.parser.parse(content, self.tree.as_ref()) {
+                Some(t) => t,
+                None => return Vec::new(),
+            }
+        } else {
+            // Full parse from scratch
+            match self.parser.parse(content, None) {
+                Some(t) => t,
+                None => return Vec::new(),
+            }
         };
 
         let mut spans = Vec::new();
@@ -105,8 +154,15 @@ impl MarkdownParser {
         // tree-sitter-md only gives us the marker positions, not semantic spans
         self.collect_inline_spans(content, &mut spans);
 
-        // Store tree for incremental parsing
+        // Add link markers (brackets and parentheses)
+        self.collect_link_markers(content, &mut spans);
+
+        // Add specific list marker types (bullet vs numbered)
+        self.collect_list_marker_types(content, &mut spans);
+
+        // Store tree and hash for incremental parsing
         self.tree = Some(tree);
+        self.last_content_hash = content_hash;
 
         spans
     }
@@ -389,6 +445,124 @@ impl MarkdownParser {
         }
     }
 
+    /// Collect specific list marker types based on ListMarker spans
+    /// Emits MarkerListBullet or MarkerListNumber depending on the marker character
+    fn collect_list_marker_types(&self, content: &str, spans: &mut Vec<Span>) {
+        // Find all ListMarker spans
+        let list_markers: Vec<(usize, usize)> = spans
+            .iter()
+            .filter(|s| s.kind == SpanKind::ListMarker)
+            .map(|s| (s.start, s.end))
+            .collect();
+
+        let bytes = content.as_bytes();
+
+        for (start, end) in list_markers {
+            if start >= bytes.len() {
+                continue;
+            }
+
+            let marker_char = bytes[start];
+
+            // Determine if it's a bullet or numbered list
+            let marker_kind = if marker_char == b'-' || marker_char == b'*' || marker_char == b'+' {
+                SpanKind::MarkerListBullet
+            } else if marker_char.is_ascii_digit() {
+                SpanKind::MarkerListNumber
+            } else {
+                continue; // Unknown marker type
+            };
+
+            // Add the marker span
+            spans.push(Span {
+                start,
+                end,
+                kind: marker_kind,
+            });
+        }
+    }
+
+    /// Collect link markers from existing Link and Image spans
+    /// Emits MarkerLink and MarkerImage spans for the brackets and parentheses
+    fn collect_link_markers(&self, content: &str, spans: &mut Vec<Span>) {
+        // Find all Link and Image spans
+        let link_spans: Vec<(usize, usize, SpanKind)> = spans
+            .iter()
+            .filter(|s| s.kind == SpanKind::Link || s.kind == SpanKind::Image)
+            .map(|s| (s.start, s.end, s.kind))
+            .collect();
+
+        let bytes = content.as_bytes();
+
+        for (start, end, kind) in link_spans {
+            let is_image = kind == SpanKind::Image;
+            let mut pos = start;
+
+            // For images, skip the leading !
+            if is_image && pos < end && bytes[pos] == b'!' {
+                spans.push(Span {
+                    start: pos,
+                    end: pos + 1,
+                    kind: SpanKind::MarkerImage,
+                });
+                pos += 1;
+            }
+
+            // Find opening [
+            if pos < end && bytes[pos] == b'[' {
+                spans.push(Span {
+                    start: pos,
+                    end: pos + 1,
+                    kind: if is_image { SpanKind::MarkerImage } else { SpanKind::MarkerLink },
+                });
+            }
+
+            // Find closing ] and opening (
+            let mut bracket_depth = 1;
+            pos += 1;
+            while pos < end {
+                if bytes[pos] == b'[' {
+                    bracket_depth += 1;
+                } else if bytes[pos] == b']' {
+                    bracket_depth -= 1;
+                    if bracket_depth == 0 {
+                        // Found closing ]
+                        spans.push(Span {
+                            start: pos,
+                            end: pos + 1,
+                            kind: if is_image { SpanKind::MarkerImage } else { SpanKind::MarkerLink },
+                        });
+
+                        // Look for opening (
+                        if pos + 1 < end && bytes[pos + 1] == b'(' {
+                            spans.push(Span {
+                                start: pos + 1,
+                                end: pos + 2,
+                                kind: if is_image { SpanKind::MarkerImage } else { SpanKind::MarkerLink },
+                            });
+
+                            // Find closing )
+                            let mut paren_pos = pos + 2;
+                            while paren_pos < end {
+                                if bytes[paren_pos] == b')' {
+                                    spans.push(Span {
+                                        start: paren_pos,
+                                        end: paren_pos + 1,
+                                        kind: if is_image { SpanKind::MarkerImage } else { SpanKind::MarkerLink },
+                                    });
+                                    break;
+                                }
+                                paren_pos += 1;
+                            }
+                        }
+                        break;
+                    }
+                }
+                pos += 1;
+            }
+        }
+    }
+
     /// Find a code span starting at the given position
     /// Returns (start, end) if a matching code span is found
     /// Handles multi-backtick delimiters: `code`, ``code``, ```code```, etc.
@@ -449,11 +623,35 @@ impl MarkdownParser {
             // Opening and closing backtick counts must match
             if bytes[i] == b'`' {
                 if let Some((start, end)) = self.find_code_span(content, i) {
+                    // Add the content span (entire code including backticks)
                     spans.push(Span {
                         start,
                         end,
                         kind: SpanKind::CodeInline,
                     });
+
+                    // Count backticks at start
+                    let mut backtick_count = 0;
+                    let mut pos = start;
+                    while pos < end && bytes[pos] == b'`' {
+                        backtick_count += 1;
+                        pos += 1;
+                    }
+
+                    // Add opening marker span
+                    spans.push(Span {
+                        start,
+                        end: start + backtick_count,
+                        kind: SpanKind::MarkerCode,
+                    });
+
+                    // Add closing marker span
+                    spans.push(Span {
+                        start: end - backtick_count,
+                        end,
+                        kind: SpanKind::MarkerCode,
+                    });
+
                     i = end;
                     continue;
                 }
@@ -462,40 +660,82 @@ impl MarkdownParser {
             i += 1;
         }
 
+        // PERFORMANCE OPTIMIZATION: Collect code regions ONCE
+        // This prevents repeated iteration over spans in each parsing function
+        let mut skip_regions: Vec<(usize, usize)> = Vec::new();
+        for span in spans.iter() {
+            match span.kind {
+                SpanKind::CodeBlock | SpanKind::CodeInline => {
+                    skip_regions.push((span.start, span.end));
+                }
+                _ => {}
+            }
+        }
+
+        // Sort and merge overlapping regions for efficiency
+        if !skip_regions.is_empty() {
+            skip_regions.sort_by_key(|(start, _)| *start);
+
+            // Merge overlapping regions
+            let mut merged: Vec<(usize, usize)> = Vec::new();
+            let mut current = skip_regions[0];
+
+            for &(start, end) in skip_regions.iter().skip(1) {
+                if start <= current.1 {
+                    // Overlapping or adjacent - merge
+                    current.1 = current.1.max(end);
+                } else {
+                    // Non-overlapping - save current and start new
+                    merged.push(current);
+                    current = (start, end);
+                }
+            }
+            merged.push(current);
+            skip_regions = merged;
+        }
+
         // Parse emphasis using delimiter stack algorithm
         self.parse_emphasis(content, spans);
 
         // Parse strikethrough (~~ text ~~)
-        self.parse_strikethrough(content, spans);
+        self.parse_strikethrough_optimized(content, spans, &skip_regions);
 
         // Parse task list markers (- [ ] and - [x])
         self.parse_task_markers(content, spans);
 
         // Parse autolinks (<https://...> and <email@...>)
-        self.parse_autolinks(content, spans);
+        self.parse_autolinks_optimized(content, spans, &skip_regions);
+
+        // Parse extended syntax (Phase 4)
+        self.parse_footnotes_optimized(content, spans, &skip_regions);
+        self.parse_math_optimized(content, spans, &skip_regions);
+        self.parse_highlight_optimized(content, spans, &skip_regions);
     }
 
-    /// Parse strikethrough formatting (~~text~~)
+    /// Helper: Check if position is inside any skip region (binary search for performance)
+    fn is_in_skip_region(pos: usize, skip_regions: &[(usize, usize)]) -> bool {
+        // Binary search for efficiency with sorted skip_regions
+        skip_regions.binary_search_by(|&(start, end)| {
+            if pos < start {
+                std::cmp::Ordering::Greater
+            } else if pos >= end {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        }).is_ok()
+    }
+
+    /// Parse strikethrough formatting (~~text~~) - OPTIMIZED
     /// Finds matching pairs of ~~ delimiters
-    fn parse_strikethrough(&self, content: &str, spans: &mut Vec<Span>) {
-        // Collect code span ranges first to avoid borrow checker issues
-        let code_spans: Vec<(usize, usize)> = spans
-            .iter()
-            .filter(|s| s.kind == SpanKind::CodeInline)
-            .map(|s| (s.start, s.end))
-            .collect();
-
-        // Helper function to check if a position is inside a code span
-        let is_in_code_span = |pos: usize| -> bool {
-            code_spans.iter().any(|(start, end)| pos >= *start && pos < *end)
-        };
-
+    /// Uses precomputed skip_regions to avoid re-collecting code spans
+    fn parse_strikethrough_optimized(&self, content: &str, spans: &mut Vec<Span>, skip_regions: &[(usize, usize)]) {
         let bytes = content.as_bytes();
         let mut i = 0;
 
         while i + 1 < bytes.len() {
             // Skip positions inside code spans
-            if is_in_code_span(i) {
+            if Self::is_in_skip_region(i, skip_regions) {
                 i += 1;
                 continue;
             }
@@ -511,11 +751,28 @@ impl MarkdownParser {
                         // Empty strikethrough ~~~~ should not match
                         if search_pos > i + 2 {
                             let end = search_pos + 2;
+
+                            // Content span (entire strikethrough including ~~)
                             spans.push(Span {
                                 start: i,
                                 end,
                                 kind: SpanKind::Strikethrough,
                             });
+
+                            // Opening marker span
+                            spans.push(Span {
+                                start: i,
+                                end: i + 2,
+                                kind: SpanKind::MarkerStrikethrough,
+                            });
+
+                            // Closing marker span
+                            spans.push(Span {
+                                start: search_pos,
+                                end,
+                                kind: SpanKind::MarkerStrikethrough,
+                            });
+
                             i = end;
                             found_closing = true;
                             break;
@@ -533,6 +790,7 @@ impl MarkdownParser {
             }
         }
     }
+
 
     /// Parse task list markers ([ ], [x], [X])
     /// Detects checkboxes in list items: `- [ ]` (unchecked) and `- [x]` (checked)
@@ -639,31 +897,27 @@ impl MarkdownParser {
                 end: pos + 3,
                 kind,
             });
+
+            // Also emit marker span for the task box itself
+            spans.push(Span {
+                start: pos,
+                end: pos + 3,
+                kind: SpanKind::MarkerTaskBox,
+            });
         }
     }
 
-    /// Parse autolinks: <https://...>, <http://...>, <email@...>
+    /// Parse autolinks: <https://...>, <http://...>, <email@...> - OPTIMIZED
     /// Also supports GFM extended autolinks (bare URLs): https://example.com, www.example.com
-    fn parse_autolinks(&self, content: &str, spans: &mut Vec<Span>) {
-        // Collect code span ranges first to avoid highlighting autolinks inside code
-        let code_spans: Vec<(usize, usize)> = spans
-            .iter()
-            .filter(|s| s.kind == SpanKind::CodeInline)
-            .map(|s| (s.start, s.end))
-            .collect();
-
-        // Helper function to check if a position is inside a code span
-        let is_in_code_span = |pos: usize| -> bool {
-            code_spans.iter().any(|(start, end)| pos >= *start && pos < *end)
-        };
-
+    /// Uses precomputed skip_regions to avoid re-collecting code spans
+    fn parse_autolinks_optimized(&self, content: &str, spans: &mut Vec<Span>, skip_regions: &[(usize, usize)]) {
         let bytes = content.as_bytes();
         let len = bytes.len();
         let mut i = 0;
 
         while i < len {
             // Skip if we're inside a code span
-            if is_in_code_span(i) {
+            if Self::is_in_skip_region(i, skip_regions) {
                 i += 1;
                 continue;
             }
@@ -846,6 +1100,131 @@ impl MarkdownParser {
         }
     }
 
+    /// Parse footnotes: references [^id] and definitions [^id]: text - OPTIMIZED
+    /// Per MARKDOWN-SYNTAX.md § Footnotes
+    /// Uses precomputed skip_regions to avoid re-collecting code spans
+    fn parse_footnotes_optimized(&self, content: &str, spans: &mut Vec<Span>, skip_regions: &[(usize, usize)]) {
+        let bytes = content.as_bytes();
+        let mut i = 0;
+
+        while i < bytes.len() {
+            // Skip if inside code span
+            if Self::is_in_skip_region(i, skip_regions) {
+                i += 1;
+                continue;
+            }
+
+            // Look for [^
+            if i + 2 < bytes.len() && bytes[i] == b'[' && bytes[i + 1] == b'^' {
+                // Find the closing ]
+                let mut j = i + 2;
+                while j < bytes.len() && bytes[j] != b']' && bytes[j] != b'\n' {
+                    j += 1;
+                }
+
+                if j < bytes.len() && bytes[j] == b']' {
+                    // We found [^id]
+                    // Check if it's followed by : (definition)
+                    let is_def = j + 1 < bytes.len() && bytes[j + 1] == b':';
+
+                    let end = if is_def { j + 2 } else { j + 1 };
+                    let kind = if is_def { SpanKind::FootnoteDef } else { SpanKind::FootnoteRef };
+
+                    spans.push(Span {
+                        start: i,
+                        end,
+                        kind,
+                    });
+
+                    i = end;
+                    continue;
+                }
+            }
+            i += 1;
+        }
+    }
+
+    /// Parse math blocks: inline $...$ and block $$...$$ - OPTIMIZED
+    /// Per MARKDOWN-SYNTAX.md § Math
+    /// Uses precomputed skip_regions to avoid re-collecting code spans
+    fn parse_math_optimized(&self, content: &str, spans: &mut Vec<Span>, skip_regions: &[(usize, usize)]) {
+        let bytes = content.as_bytes();
+        let mut i = 0;
+
+        while i < bytes.len() {
+            // Skip if inside code span
+            if Self::is_in_skip_region(i, skip_regions) {
+                i += 1;
+                continue;
+            }
+
+            if bytes[i] == b'$' {
+                // Check for block math $$
+                if i + 1 < bytes.len() && bytes[i + 1] == b'$' {
+                    if let Some(end_offset) = content[i + 2..].find("$$") {
+                        let end = i + 2 + end_offset + 2;
+                        spans.push(Span {
+                            start: i,
+                            end,
+                            kind: SpanKind::MathBlock,
+                        });
+                        i = end;
+                        continue;
+                    }
+                }
+                // Inline math $
+                else if let Some(end_offset) = content[i + 1..].find('$') {
+                    let end = i + 1 + end_offset + 1;
+                    // Make sure inline math doesn't cross newlines
+                    let candidate = &content[i + 1..end - 1];
+                    if !candidate.contains('\n') {
+                        spans.push(Span {
+                            start: i,
+                            end,
+                            kind: SpanKind::MathInline,
+                        });
+                        i = end;
+                        continue;
+                    }
+                }
+            }
+            i += 1;
+        }
+    }
+
+    /// Parse highlighting: ==text== - OPTIMIZED
+    /// Per MARKDOWN-SYNTAX.md § Highlighting
+    /// Uses precomputed skip_regions to avoid re-collecting code spans
+    fn parse_highlight_optimized(&self, content: &str, spans: &mut Vec<Span>, skip_regions: &[(usize, usize)]) {
+        let bytes = content.as_bytes();
+        let mut i = 0;
+
+        while i + 1 < bytes.len() {
+            // Skip if inside code span
+            if Self::is_in_skip_region(i, skip_regions) {
+                i += 1;
+                continue;
+            }
+
+            if bytes[i] == b'=' && bytes[i + 1] == b'=' {
+                if let Some(end_offset) = content[i + 2..].find("==") {
+                    // Check that we have content between the delimiters
+                    if end_offset > 0 {
+                        let end = i + 2 + end_offset + 2;
+                        spans.push(Span {
+                            start: i,
+                            end,
+                            kind: SpanKind::Highlight,
+                        });
+                        i = end;
+                        continue;
+                    }
+                }
+            }
+            i += 1;
+        }
+    }
+
     /// Parse emphasis and strong using CommonMark flanking rules
     fn parse_emphasis(&self, content: &str, spans: &mut Vec<Span>) {
         #[derive(Debug)]
@@ -967,6 +1346,27 @@ impl MarkdownParser {
                     kind,
                 });
 
+                // Emit marker spans for opening and closing delimiters
+                let marker_kind = if use_count == 2 {
+                    SpanKind::MarkerBold
+                } else {
+                    SpanKind::MarkerItalic
+                };
+
+                // Opening marker
+                spans.push(Span {
+                    start: span_start,
+                    end: span_start + use_count,
+                    kind: marker_kind,
+                });
+
+                // Closing marker
+                spans.push(Span {
+                    start: closer.start,
+                    end: closer.start + use_count,
+                    kind: marker_kind,
+                });
+
                 // Mark as processed
                 processed[opener_idx] = true;
                 processed[closer_idx] = true;
@@ -1011,6 +1411,7 @@ impl MarkdownParser {
     /// Clear cached tree (call when document changes significantly)
     pub fn reset(&mut self) {
         self.tree = None;
+        self.last_content_hash = 0;
     }
 
     fn collect_spans(&self, tree: &Tree, content: &str, spans: &mut Vec<Span>) {
@@ -1071,12 +1472,12 @@ impl MarkdownParser {
             }
             // Note: tree-sitter-md doesn't recognize setext headings as special nodes
             // They're parsed as paragraphs, so we detect them manually in collect_setext_headings()
-            "atx_h1_marker" => Some(SpanKind::HeadingMarker),
-            "atx_h2_marker" => Some(SpanKind::HeadingMarker),
-            "atx_h3_marker" => Some(SpanKind::HeadingMarker),
-            "atx_h4_marker" => Some(SpanKind::HeadingMarker),
-            "atx_h5_marker" => Some(SpanKind::HeadingMarker),
-            "atx_h6_marker" => Some(SpanKind::HeadingMarker),
+            "atx_h1_marker" | "atx_h2_marker" | "atx_h3_marker" |
+            "atx_h4_marker" | "atx_h5_marker" | "atx_h6_marker" => {
+                // These are already captured by tree-sitter as HeadingMarker
+                // But we also want to emit MarkerHeading for ghost mode
+                Some(SpanKind::MarkerHeading)
+            }
 
             // Code blocks
             "fenced_code_block" | "indented_code_block" => Some(SpanKind::CodeBlock),
@@ -1089,9 +1490,17 @@ impl MarkdownParser {
             "link_title" => Some(SpanKind::LinkTitle),
             "image" => Some(SpanKind::Image),
 
-            // Lists
-            "list_marker_minus" | "list_marker_plus" | "list_marker_star" |
-            "list_marker_dot" | "list_marker_parenthesis" => Some(SpanKind::ListMarker),
+            // Lists - keep ListMarker for backward compatibility, also emit marker spans
+            "list_marker_minus" | "list_marker_plus" | "list_marker_star" => {
+                // Return ListMarker for backward compatibility
+                // MarkerListBullet will be added in post-processing if needed
+                Some(SpanKind::ListMarker)
+            }
+            "list_marker_dot" | "list_marker_parenthesis" => {
+                // Return ListMarker for backward compatibility
+                // MarkerListNumber will be added in post-processing if needed
+                Some(SpanKind::ListMarker)
+            }
 
             // Block elements
             "block_quote" => Some(SpanKind::BlockQuote),

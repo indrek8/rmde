@@ -323,15 +323,12 @@ pub enum SpanKind {
     MarkerHeading = 100,      // # characters
     MarkerBold = 101,         // ** or __
     MarkerItalic = 102,       // * or _
-    MarkerBoldItalic = 103,   // *** or ___
     MarkerStrikethrough = 104, // ~~
     MarkerCode = 105,         // ` characters
-    MarkerCodeFence = 106,    // ``` or ~~~
     MarkerLink = 107,         // [ ] ( )
     MarkerImage = 108,        // ! [ ] ( )
     MarkerListBullet = 109,   // - * +
     MarkerListNumber = 110,   // 1. 2) etc
-    MarkerBlockquote = 111,   // >
     MarkerTaskBox = 112,      // [ ] or [x]
 }
 ```

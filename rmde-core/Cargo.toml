@@ -17,5 +17,12 @@ parking_lot.workspace = true
 thiserror.workspace = true
 swift-bridge = "0.1"
 
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
 [build-dependencies]
 swift-bridge-build = "0.1"
+
+[[bench]]
+name = "parser"
+harness = false
