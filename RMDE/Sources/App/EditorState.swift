@@ -15,8 +15,11 @@ struct Tab: Identifiable, Equatable {
 final class EditorState: ObservableObject {
     private var editor: RMDEEditor
 
-    @Published var content: String = ""
+    @Published var contentVersion: Int = 0  // Increments on file open, tab switch
     @Published var cursorPosition: UInt = 0
+    @Published var cursorLine: UInt = 1
+    @Published var cursorColumn: UInt = 1
+    @Published var lineCount: UInt = 0
     @Published var isDirty: Bool = false
     @Published var title: String = "Untitled"
     @Published var tabs: [Tab] = []
@@ -186,13 +189,46 @@ final class EditorState: ObservableObject {
 
     // MARK: - Sync with Rust
 
-    /// Sync Swift state from Rust editor
-    private func syncFromRust() {
-        content = editor.get_content().toString()
+    /// Apply an incremental edit from NSTextView
+    /// Called by EditorView delegate on each text change
+    func applyEdit(pos: Int, deleteLen: Int, text: String) {
+        editor.apply_edit(UInt(pos), UInt(deleteLen), text)
+        syncMetadata()  // Fast - only metadata, not content
+    }
+
+    /// Full content sync - used for recovery when incremental sync gets out of sync
+    func fullSync(_ content: String) {
+        editor.select_all()
+        editor.insert_text(content)
+        syncMetadata()  // Fast - only metadata, not content
+    }
+
+    /// Get content length for sync verification
+    var contentLength: Int {
+        Int(editor.get_content_length())
+    }
+
+    /// Lightweight sync - only metadata, not content (fast, for every edit)
+    private func syncMetadata() {
         cursorPosition = editor.get_cursor_position()
+        cursorLine = UInt(editor.get_cursor_line())
+        cursorColumn = UInt(editor.get_cursor_column())
+        lineCount = UInt(editor.get_line_count())
         isDirty = editor.is_dirty()
+        activeTabId = editor.get_active_tab_id()
+
+        // Update active tab's dirty state
+        if let idx = tabs.firstIndex(where: { $0.id == activeTabId }) {
+            tabs[idx].isDirty = isDirty
+        }
+    }
+
+    /// Full sync - increments version to trigger NSTextView reload
+    private func syncFromRust() {
+        contentVersion += 1  // Trigger NSTextView to reload
         title = editor.get_title().toString()
         activeTabId = editor.get_active_tab_id()
+        syncMetadata()
 
         // Initialize tabs if empty (first run)
         if tabs.isEmpty {
@@ -206,13 +242,9 @@ final class EditorState: ObservableObject {
         }
     }
 
-    /// Update content from external source (e.g., NSTextView)
-    func updateContent(_ newContent: String, cursorPos: UInt) {
-        // Calculate diff and apply to Rust editor
-        // For now, simple approach: select all and replace
-        editor.select_all()
-        editor.insert_text(newContent)
-        editor.set_cursor(cursorPos)
-        syncFromRust()
+    /// Get content from Rust - only call when actually needed (e.g., loading into NSTextView)
+    func getContent() -> String {
+        editor.get_content().toString()
     }
+
 }

@@ -31,7 +31,7 @@ struct EditorView: NSViewRepresentable {
         textView.backgroundColor = NSColor.textBackgroundColor
         textView.isEditable = true
         textView.isSelectable = true
-        textView.allowsUndo = false  // We handle undo in Rust
+        textView.allowsUndo = true  // Native NSUndoManager handles undo/redo
         textView.isRichText = false
         textView.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
         textView.textColor = NSColor.textColor
@@ -53,11 +53,12 @@ struct EditorView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? RMDETextView else { return }
 
-        // Only update if content changed externally (e.g., file opened)
-        if textView.string != editorState.content {
-            let selectedRange = textView.selectedRange()
-            textView.string = editorState.content
-            textView.setSelectedRange(selectedRange)
+        // Only reload content when version changes (file open, tab switch)
+        if context.coordinator.loadedVersion != editorState.contentVersion {
+            context.coordinator.loadedVersion = editorState.contentVersion
+            let content = editorState.getContent()  // Single copy, only when needed
+            textView.string = content
+            textView.setSelectedRange(NSRange(location: 0, length: 0))
         }
     }
 
@@ -66,17 +67,32 @@ struct EditorView: NSViewRepresentable {
     }
 
     class Coordinator: NSObject, NSTextViewDelegate {
+        var loadedVersion: Int = -1  // Track which content version is loaded
+
+        func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString text: String?) -> Bool {
+            guard let rmdeTextView = textView as? RMDETextView,
+                  let editorState = rmdeTextView.editorState else { return true }
+
+            // Send incremental edit to Rust before the change happens
+            editorState.applyEdit(
+                pos: range.location,
+                deleteLen: range.length,
+                text: text ?? ""
+            )
+            return true
+        }
+
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? RMDETextView,
                   let editorState = textView.editorState else { return }
 
-            let cursorPos = UInt(textView.selectedRange().location)
-            editorState.updateContent(textView.string, cursorPos: cursorPos)
-        }
+            // Verify sync - if lengths don't match, do full resync
+            let swiftLen = textView.string.utf8.count
+            let rustLen = editorState.contentLength
 
-        func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString text: String?) -> Bool {
-            // Let the change happen - we'll sync after
-            return true
+            if swiftLen != rustLen {
+                editorState.fullSync(textView.string)
+            }
         }
     }
 }

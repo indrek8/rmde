@@ -33,6 +33,12 @@ mod ffi {
         fn move_cursors(&mut self, delta: i64, extend: bool);
         fn select_all(&mut self);
         fn get_cursor_position(&self) -> usize;
+        fn get_cursor_line(&self) -> usize;
+        fn get_cursor_column(&self) -> usize;
+        fn get_line_count(&self) -> usize;
+
+        // Incremental sync from NSTextView
+        fn apply_edit(&mut self, pos: usize, delete_len: usize, text: &str);
 
         // File operations - returns empty string on success, error message on failure
         fn open_file(&mut self, path: &str) -> String;
@@ -124,10 +130,35 @@ impl RMDEEditor {
         let _ = self.inner.select_all();
     }
 
+    fn apply_edit(&mut self, pos: usize, delete_len: usize, text: &str) {
+        let _ = self.inner.apply_edit(pos, delete_len, text);
+    }
+
     fn get_cursor_position(&self) -> usize {
         self.inner
             .active()
             .map(|d| d.primary_selection().head)
+            .unwrap_or(0)
+    }
+
+    fn get_cursor_line(&self) -> usize {
+        self.inner
+            .active()
+            .map(|d| d.cursor_line_col().0)
+            .unwrap_or(1)
+    }
+
+    fn get_cursor_column(&self) -> usize {
+        self.inner
+            .active()
+            .map(|d| d.cursor_line_col().1)
+            .unwrap_or(1)
+    }
+
+    fn get_line_count(&self) -> usize {
+        self.inner
+            .active()
+            .map(|d| d.line_count())
             .unwrap_or(0)
     }
 

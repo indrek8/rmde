@@ -113,6 +113,34 @@ impl Document {
         self.content.len_lines()
     }
 
+    /// Apply an incremental edit from NSTextView
+    /// This is the primary sync method - called on each text change
+    pub fn apply_edit(&mut self, pos: usize, delete_len: usize, text: &str) {
+        let pos = pos.min(self.content.len_bytes());
+        let char_pos = self.content.byte_to_char(pos);
+
+        // Delete characters if needed
+        if delete_len > 0 {
+            let delete_end = (pos + delete_len).min(self.content.len_bytes());
+            let char_end = self.content.byte_to_char(delete_end);
+            if char_end > char_pos {
+                self.content.remove(char_pos..char_end);
+            }
+        }
+
+        // Insert new text if any
+        if !text.is_empty() {
+            // Recalculate char position after deletion
+            let char_pos = self.content.byte_to_char(pos.min(self.content.len_bytes()));
+            self.content.insert(char_pos, text);
+        }
+
+        // Update cursor position to end of inserted text
+        let new_pos = pos + text.len();
+        self.selections = vec![Selection::cursor(new_pos.min(self.content.len_bytes()))];
+        self.dirty = true;
+    }
+
     /// Get a specific line (0-indexed)
     pub fn line(&self, idx: usize) -> Option<String> {
         if idx < self.content.len_lines() {
@@ -120,6 +148,22 @@ impl Document {
         } else {
             None
         }
+    }
+
+    /// Get line and column for a byte position (both 1-indexed for display)
+    pub fn line_col(&self, byte_pos: usize) -> (usize, usize) {
+        let byte_pos = byte_pos.min(self.content.len_bytes());
+        let char_idx = self.content.byte_to_char(byte_pos);
+        let line_idx = self.content.char_to_line(char_idx);
+        let line_start_char = self.content.line_to_char(line_idx);
+        let col = char_idx - line_start_char;
+        (line_idx + 1, col + 1)  // 1-indexed for display
+    }
+
+    /// Get cursor line and column (1-indexed)
+    pub fn cursor_line_col(&self) -> (usize, usize) {
+        let pos = self.primary_selection().head;
+        self.line_col(pos)
     }
 
     /// Get all selections
@@ -184,7 +228,6 @@ impl Document {
             sel.anchor = sel.head;
         }
 
-        // Re-sort selections ascending and adjust for insertions
         self.normalize_selections();
         self.dirty = true;
     }

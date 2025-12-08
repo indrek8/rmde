@@ -13,10 +13,12 @@ xcode: copy-bridge
 build-rust:
 	cargo build --release
 
-# Copy generated Swift bridge files to RMDE app
+# Copy generated bridge files (Swift + headers) to RMDE app
 copy-bridge: build-rust
 	cp rmde-core/generated/SwiftBridgeCore.swift RMDE/Sources/Bridge/
+	cp rmde-core/generated/SwiftBridgeCore.h RMDE/Sources/Bridge/
 	cp rmde-core/generated/rmde-core/rmde-core.swift RMDE/Sources/Bridge/RMDECore.swift
+	cp rmde-core/generated/rmde-core/rmde-core.h RMDE/Sources/Bridge/
 	@echo "Bridge files copied to RMDE/Sources/Bridge/"
 
 # Build for Apple Silicon (arm64)

@@ -228,6 +228,14 @@ impl Editor {
         Ok(())
     }
 
+    /// Apply an incremental edit to active document
+    pub fn apply_edit(&mut self, pos: usize, delete_len: usize, text: &str) -> Result<()> {
+        self.active_mut()
+            .ok_or(Error::NoActiveDocument)?
+            .apply_edit(pos, delete_len, text);
+        Ok(())
+    }
+
     // --- Private helpers ---
 
     fn find_doc_index(&self, id: DocumentId) -> Option<usize> {

@@ -12,16 +12,24 @@ struct StatusBarView: View {
 
             Spacer()
 
-            // Cursor position
-            Text("Pos \(editorState.cursorPosition)")
+            // Line:Column
+            Text("Ln \(editorState.cursorLine), Col \(editorState.cursorColumn)")
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundColor(.secondary)
 
             Divider()
                 .frame(height: 12)
 
-            // Character count
-            Text("\(editorState.content.count) chars")
+            // Line count
+            Text("\(editorState.lineCount) lines")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(.secondary)
+
+            Divider()
+                .frame(height: 12)
+
+            // Character count (from Rust - no string copy)
+            Text("\(editorState.contentLength) chars")
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundColor(.secondary)
         }

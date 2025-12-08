@@ -5,19 +5,37 @@ A minimal, lightning-fast, plain-text editor for Markdown files. Built with a Ru
 ## Why RMDE
 
 - **Rust-powered speed** — sub-100ms startup, <16ms keystroke latency
-- **Markdown-native** — open, edit, and save `.md` files directly; what you write is what stays on disk
-- **Zero cloud lock-in** — plain text files only; no databases, no proprietary formats
-- **Local-first & private** — your notes stay local unless you explicitly sync them
+- **Markdown-native** — open, edit, and save `.md` files directly
+- **Zero cloud lock-in** — plain text files only, no proprietary formats
+- **Local-first** — your notes stay local unless you explicitly sync them
 
-## Features (v0.x)
+## Features
 
 - [x] Open and edit Markdown files
 - [x] Multiple tabs
 - [x] Native macOS UI (SwiftUI + TextKit 2)
-- [ ] Syntax highlighting (headers, code blocks, emphasis, lists)
-- [ ] Multi-cursor editing (Cmd+D, Cmd+Click)
+- [ ] Syntax highlighting
+- [ ] Multi-cursor editing
 - [ ] Undo/redo
-- [ ] Search + quick open
+
+## Build & Run
+
+**Prerequisites:**
+- Rust (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`)
+- Xcode 15+
+- XcodeGen (`brew install xcodegen`)
+
+```bash
+git clone git@github.com:indrek8/rmde.git
+cd rmde
+
+# Build Rust core + generate Xcode project
+source $HOME/.cargo/env
+make xcode
+
+# Open in Xcode and run (Cmd+R)
+open RMDE/RMDE.xcodeproj
+```
 
 ## Architecture
 
@@ -35,63 +53,22 @@ A minimal, lightning-fast, plain-text editor for Markdown files. Built with a Ru
 └─────────────────────────────────────┘
 ```
 
-## Build & Run
-
-**Prerequisites:**
-- Rust (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`)
-- Xcode 15+
-- XcodeGen (`brew install xcodegen`)
-
-```bash
-# Clone
-git clone git@github.com:indrek8/rmde.git
-cd rmde
-
-# Build Rust core + generate Xcode project
-source $HOME/.cargo/env
-make xcode
-
-# Open in Xcode and run (Cmd+R)
-open RMDE/RMDE.xcodeproj
-```
-
 ## Project Structure
 
 ```
 rmde/
-├── Cargo.toml              # Workspace
-├── Makefile                # Build commands
 ├── rmde-core/              # Rust library
 │   └── src/
-│       ├── lib.rs          # Public API, FFI exports
-│       ├── document.rs     # Rope-based document
+│       ├── lib.rs          # FFI exports
+│       ├── document.rs     # Rope buffer
 │       ├── editor.rs       # Tab management
-│       ├── selection.rs    # Multi-cursor
-│       └── ffi.rs          # swift-bridge bindings
+│       └── selection.rs    # Multi-cursor
 └── RMDE/                   # macOS app
     └── Sources/
-        ├── App/            # RMDEApp, EditorState
+        ├── App/            # EditorState
         ├── Views/          # SwiftUI views
         └── Bridge/         # Generated FFI
 ```
-
-## Performance Targets
-
-| Metric | Target |
-|--------|--------|
-| Startup | < 100ms |
-| Keystroke latency | < 16ms |
-| Memory (empty) | < 20MB |
-| File open (1MB) | < 50ms |
-
-## Roadmap
-
-1. **Phase 1** — Foundation (done)
-2. **Phase 2** — Core editing, undo/redo, keyboard shortcuts
-3. **Phase 3** — Multi-cursor support
-4. **Phase 4** — Syntax highlighting via tree-sitter
-5. **Phase 5** — Polish, themes, performance tuning
-6. **Phase 6** — AI-assisted writing (future)
 
 ## License
 

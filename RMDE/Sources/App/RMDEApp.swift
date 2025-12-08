@@ -34,6 +34,8 @@ struct RMDEApp: App {
                 .keyboardShortcut("s", modifiers: [.command, .shift])
             }
 
+            // Note: Undo/Redo handled natively by NSTextView (NSUndoManager)
+
             CommandGroup(after: .windowArrangement) {
                 Button("Next Tab") {
                     editorState.nextTab()
