@@ -103,6 +103,7 @@ struct EditorView: NSViewRepresentable {
         let baseFont = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
 
         switch kind {
+        // Headings
         case HighlightSpan.heading1:
             return [
                 .font: NSFont.monospacedSystemFont(ofSize: 24, weight: .bold),
@@ -127,6 +128,8 @@ struct EditorView: NSViewRepresentable {
             return [
                 .foregroundColor: NSColor.secondaryLabelColor
             ]
+
+        // Emphasis
         case HighlightSpan.bold:
             return [
                 .font: NSFont.monospacedSystemFont(ofSize: 14, weight: .bold)
@@ -135,6 +138,17 @@ struct EditorView: NSViewRepresentable {
             let descriptor = baseFont.fontDescriptor.withSymbolicTraits(.italic)
             let italicFont = NSFont(descriptor: descriptor, size: 14) ?? baseFont
             return [.font: italicFont]
+        case HighlightSpan.boldItalic:
+            let descriptor = baseFont.fontDescriptor.withSymbolicTraits([.italic, .bold])
+            let boldItalicFont = NSFont(descriptor: descriptor, size: 14) ?? baseFont
+            return [.font: boldItalicFont]
+        case HighlightSpan.strikethrough:
+            return [
+                .strikethroughStyle: NSUnderlineStyle.single.rawValue,
+                .strikethroughColor: NSColor.secondaryLabelColor
+            ]
+
+        // Code
         case HighlightSpan.codeInline:
             return [
                 .font: baseFont,
@@ -151,6 +165,8 @@ struct EditorView: NSViewRepresentable {
             return [
                 .foregroundColor: NSColor.systemOrange
             ]
+
+        // Links and Images
         case HighlightSpan.link:
             return [
                 .foregroundColor: NSColor.linkColor,
@@ -160,18 +176,125 @@ struct EditorView: NSViewRepresentable {
             return [
                 .foregroundColor: NSColor.secondaryLabelColor
             ]
-        case HighlightSpan.listMarker:
+        case HighlightSpan.linkTitle:
             return [
-                .foregroundColor: NSColor.systemBlue
-            ]
-        case HighlightSpan.blockQuote:
-            return [
-                .foregroundColor: NSColor.systemGray
+                .foregroundColor: NSColor.tertiaryLabelColor
             ]
         case HighlightSpan.image:
             return [
                 .foregroundColor: NSColor.systemPurple
             ]
+        case HighlightSpan.autolink, HighlightSpan.autolinkEmail:
+            return [
+                .foregroundColor: NSColor.linkColor,
+                .underlineStyle: NSUnderlineStyle.single.rawValue
+            ]
+
+        // Lists
+        case HighlightSpan.listMarker:
+            return [
+                .foregroundColor: NSColor.systemBlue
+            ]
+        case HighlightSpan.taskMarker:
+            return [
+                .foregroundColor: NSColor.systemGray
+            ]
+        case HighlightSpan.taskChecked:
+            return [
+                .foregroundColor: NSColor.systemGreen,
+                .font: NSFont.monospacedSystemFont(ofSize: 14, weight: .semibold)
+            ]
+
+        // Blocks
+        case HighlightSpan.blockQuote:
+            return [
+                .foregroundColor: NSColor.systemGray
+            ]
+        case HighlightSpan.horizontalRule:
+            return [
+                .foregroundColor: NSColor.separator
+            ]
+
+        // Tables (GFM)
+        case HighlightSpan.tableHeader:
+            return [
+                .font: NSFont.monospacedSystemFont(ofSize: 14, weight: .semibold),
+                .foregroundColor: NSColor.systemBlue
+            ]
+        case HighlightSpan.tableDelimiter:
+            return [
+                .foregroundColor: NSColor.systemGray
+            ]
+        case HighlightSpan.tableCell:
+            return [
+                .foregroundColor: NSColor.labelColor
+            ]
+
+        // Generic emphasis (70)
+        case HighlightSpan.emphasis:
+            let descriptor = baseFont.fontDescriptor.withSymbolicTraits(.italic)
+            let italicFont = NSFont(descriptor: descriptor, size: 14) ?? baseFont
+            return [.font: italicFont]
+
+        // Extended Syntax (Phase 4)
+        case HighlightSpan.footnoteRef, HighlightSpan.footnoteDef:
+            return [
+                .foregroundColor: NSColor.systemIndigo,
+                .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+            ]
+        case HighlightSpan.mathInline, HighlightSpan.mathBlock:
+            return [
+                .foregroundColor: NSColor.systemPurple,
+                .font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+            ]
+        case HighlightSpan.highlight:
+            return [
+                .backgroundColor: NSColor.systemYellow.withAlphaComponent(0.3)
+            ]
+
+        // LLM Artifacts (Phase 6)
+        case HighlightSpan.artifactThinking:
+            return [
+                .foregroundColor: NSColor.systemTeal.withAlphaComponent(0.7),
+                .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .light)
+            ]
+        case HighlightSpan.artifactMeta:
+            return [
+                .foregroundColor: NSColor.systemBrown.withAlphaComponent(0.7),
+                .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .light)
+            ]
+
+        // Markers for ghost mode (100+)
+        // These will be styled for visibility initially, then can be made "ghost" in phase 4
+        case HighlightSpan.markerHeading:
+            return [
+                .foregroundColor: NSColor.systemGray
+            ]
+        case HighlightSpan.markerBold, HighlightSpan.markerItalic:
+            return [
+                .foregroundColor: NSColor.systemGray
+            ]
+        case HighlightSpan.markerStrikethrough:
+            return [
+                .foregroundColor: NSColor.systemGray
+            ]
+        case HighlightSpan.markerCode:
+            return [
+                .foregroundColor: NSColor.systemGray
+            ]
+        case HighlightSpan.markerLink, HighlightSpan.markerImage:
+            return [
+                .foregroundColor: NSColor.systemGray
+            ]
+        case HighlightSpan.markerListBullet, HighlightSpan.markerListNumber:
+            return [
+                .foregroundColor: NSColor.systemGray
+            ]
+        case HighlightSpan.markerTaskBox:
+            return [
+                .foregroundColor: NSColor.systemGray
+            ]
+
         default:
             return [:]
         }

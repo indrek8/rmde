@@ -16,7 +16,9 @@ struct HighlightSpan {
     let end: Int
     let kind: UInt64
 
-    // SpanKind values from Rust parser
+    // SpanKind values from Rust parser (must match rmde-core/src/parser.rs)
+
+    // Headings
     static let heading1: UInt64 = 1
     static let heading2: UInt64 = 2
     static let heading3: UInt64 = 3
@@ -24,19 +26,66 @@ struct HighlightSpan {
     static let heading5: UInt64 = 5
     static let heading6: UInt64 = 6
     static let headingMarker: UInt64 = 7
+
+    // Emphasis
     static let bold: UInt64 = 10
     static let italic: UInt64 = 11
+    static let boldItalic: UInt64 = 12
+    static let strikethrough: UInt64 = 13
+
+    // Code
     static let codeInline: UInt64 = 20
     static let codeBlock: UInt64 = 21
     static let codeFence: UInt64 = 22
     static let codeLanguage: UInt64 = 23
+
+    // Links and Images
     static let link: UInt64 = 30
     static let linkUrl: UInt64 = 31
     static let linkTitle: UInt64 = 32
     static let image: UInt64 = 33
+    static let autolink: UInt64 = 34
+    static let autolinkEmail: UInt64 = 35
+
+    // Lists
     static let listMarker: UInt64 = 40
+    static let taskMarker: UInt64 = 41
+    static let taskChecked: UInt64 = 42
+
+    // Blocks
     static let blockQuote: UInt64 = 50
     static let horizontalRule: UInt64 = 51
+
+    // Tables (GFM)
+    static let tableHeader: UInt64 = 60
+    static let tableDelimiter: UInt64 = 61
+    static let tableCell: UInt64 = 62
+
+    // Generic emphasis (70)
+    static let emphasis: UInt64 = 70
+
+    // Extended Syntax (Phase 4)
+    static let footnoteRef: UInt64 = 80
+    static let footnoteDef: UInt64 = 81
+    static let mathInline: UInt64 = 82
+    static let mathBlock: UInt64 = 83
+    static let highlight: UInt64 = 84
+
+    // LLM Artifacts (Phase 6)
+    static let artifactThinking: UInt64 = 90
+    static let artifactMeta: UInt64 = 91
+
+    // Markers for ghost mode (100+)
+    static let markerHeading: UInt64 = 100
+    static let markerBold: UInt64 = 101
+    static let markerItalic: UInt64 = 102
+    static let markerStrikethrough: UInt64 = 104
+    static let markerCode: UInt64 = 105
+    static let markerLink: UInt64 = 107
+    static let markerImage: UInt64 = 108
+    static let markerListBullet: UInt64 = 109
+    static let markerListNumber: UInt64 = 110
+    static let markerTaskBox: UInt64 = 112
 }
 
 /// Observable state wrapper around the Rust editor core

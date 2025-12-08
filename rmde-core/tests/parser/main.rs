@@ -9,6 +9,7 @@
 //! - markers - Marker spans for ghost mode (Phase 3)
 //! - streaming - Streaming parser for LLM output (Phase 6)
 //! - artifacts - Claude artifact parsing (Phase 6 - Optional)
+//! - spankind_sync - Rust/Swift SpanKind value synchronization tests
 
 mod commonmark;
 mod gfm;
@@ -18,3 +19,4 @@ mod integration;
 mod markers;
 mod streaming;
 mod artifacts;
+mod spankind_sync;
