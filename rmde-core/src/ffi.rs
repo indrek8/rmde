@@ -1,17 +1,16 @@
 //! FFI bridge for Swift interop via swift-bridge
 
-use crate::{DocumentId, Editor};
+use crate::{DocumentId, Editor, MarkdownParser};
 
 #[swift_bridge::bridge]
 mod ffi {
     extern "Rust" {
+        // Editor type and methods
         type RMDEEditor;
 
-        // Constructor
         #[swift_bridge(init)]
         fn new() -> RMDEEditor;
 
-        // Tab management
         fn new_tab(&mut self) -> u64;
         fn close_tab(&mut self, id: u64) -> bool;
         fn switch_tab(&mut self, id: u64) -> bool;
@@ -20,14 +19,12 @@ mod ffi {
         fn tab_count(&self) -> usize;
         fn get_active_tab_id(&self) -> u64;
 
-        // Document content
         fn get_content(&self) -> String;
         fn get_content_length(&self) -> usize;
         fn insert_text(&mut self, text: &str);
         fn delete_backward(&mut self);
         fn delete_forward(&mut self);
 
-        // Cursor/selection
         fn set_cursor(&mut self, pos: usize);
         fn add_cursor(&mut self, pos: usize);
         fn move_cursors(&mut self, delta: i64, extend: bool);
@@ -37,17 +34,25 @@ mod ffi {
         fn get_cursor_column(&self) -> usize;
         fn get_line_count(&self) -> usize;
 
-        // Incremental sync from NSTextView
         fn apply_edit(&mut self, pos: usize, delete_len: usize, text: &str);
 
-        // File operations - returns empty string on success, error message on failure
         fn open_file(&mut self, path: &str) -> String;
         fn save_file(&mut self) -> String;
         fn save_file_as(&mut self, path: &str) -> String;
 
-        // Document info
         fn is_dirty(&self) -> bool;
         fn get_title(&self) -> String;
+    }
+
+    extern "Rust" {
+        // Parser type and methods
+        type RMDEParser;
+
+        #[swift_bridge(init)]
+        fn new_parser() -> RMDEParser;
+
+        fn parse(&mut self, content: &str) -> Vec<u64>;
+        fn reset_parser(&mut self);
     }
 }
 
@@ -189,5 +194,34 @@ impl RMDEEditor {
 
     fn get_title(&self) -> String {
         self.inner.active().map(|d| d.title()).unwrap_or_default()
+    }
+}
+
+/// Wrapper around MarkdownParser for FFI
+pub struct RMDEParser {
+    inner: MarkdownParser,
+}
+
+impl RMDEParser {
+    fn new_parser() -> Self {
+        Self {
+            inner: MarkdownParser::new().expect("Failed to create parser"),
+        }
+    }
+
+    /// Parse content and return packed spans: [start, end, kind, ...]
+    fn parse(&mut self, content: &str) -> Vec<u64> {
+        let spans = self.inner.parse(content);
+        let mut result = Vec::with_capacity(spans.len() * 3);
+        for span in spans {
+            result.push(span.start as u64);
+            result.push(span.end as u64);
+            result.push(span.kind as u64);
+        }
+        result
+    }
+
+    fn reset_parser(&mut self) {
+        self.inner.reset();
     }
 }

@@ -2,11 +2,13 @@ mod document;
 mod editor;
 mod error;
 mod ffi;
+mod parser;
 mod selection;
 
 pub use document::Document;
 pub use editor::Editor;
 pub use error::Error;
+pub use parser::{MarkdownParser, Span, SpanKind};
 pub use selection::Selection;
 
 /// Document identifier for tab tracking

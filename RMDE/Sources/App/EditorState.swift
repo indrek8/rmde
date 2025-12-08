@@ -10,12 +10,45 @@ struct Tab: Identifiable, Equatable {
     var filePath: URL?
 }
 
+/// Highlight span from Rust parser
+struct HighlightSpan {
+    let start: Int
+    let end: Int
+    let kind: UInt64
+
+    // SpanKind values from Rust parser
+    static let heading1: UInt64 = 1
+    static let heading2: UInt64 = 2
+    static let heading3: UInt64 = 3
+    static let heading4: UInt64 = 4
+    static let heading5: UInt64 = 5
+    static let heading6: UInt64 = 6
+    static let headingMarker: UInt64 = 7
+    static let bold: UInt64 = 10
+    static let italic: UInt64 = 11
+    static let codeInline: UInt64 = 20
+    static let codeBlock: UInt64 = 21
+    static let codeFence: UInt64 = 22
+    static let codeLanguage: UInt64 = 23
+    static let link: UInt64 = 30
+    static let linkUrl: UInt64 = 31
+    static let linkTitle: UInt64 = 32
+    static let image: UInt64 = 33
+    static let listMarker: UInt64 = 40
+    static let blockQuote: UInt64 = 50
+    static let horizontalRule: UInt64 = 51
+}
+
 /// Observable state wrapper around the Rust editor core
 @MainActor
 final class EditorState: ObservableObject {
     private var editor: RMDEEditor
+    private var parser: RMDEParser
+    private var parseTimer: Timer?
+    private let parseDebounceInterval: TimeInterval = 0.3  // 300ms debounce
 
     @Published var contentVersion: Int = 0  // Increments on file open, tab switch
+    @Published var highlightVersion: Int = 0  // Increments when highlights change
     @Published var cursorPosition: UInt = 0
     @Published var cursorLine: UInt = 1
     @Published var cursorColumn: UInt = 1
@@ -25,8 +58,12 @@ final class EditorState: ObservableObject {
     @Published var tabs: [Tab] = []
     @Published var activeTabId: UInt64 = 0
 
+    // Highlight spans - not @Published to avoid excessive updates
+    private(set) var highlightSpans: [HighlightSpan] = []
+
     init() {
         editor = RMDEEditor()
+        parser = RMDEParser()
         syncFromRust()
     }
 
@@ -52,6 +89,7 @@ final class EditorState: ObservableObject {
 
     func switchTab(id: UInt64) {
         if editor.switch_tab(id) {
+            resetParser()  // Clear cached tree before switching
             syncFromRust()
         }
     }
@@ -194,6 +232,7 @@ final class EditorState: ObservableObject {
     func applyEdit(pos: Int, deleteLen: Int, text: String) {
         editor.apply_edit(UInt(pos), UInt(deleteLen), text)
         syncMetadata()  // Fast - only metadata, not content
+        scheduleHighlightUpdate()  // Debounced syntax highlighting
     }
 
     /// Full content sync - used for recovery when incremental sync gets out of sync
@@ -240,11 +279,62 @@ final class EditorState: ObservableObject {
             tabs[idx].title = title
             tabs[idx].isDirty = isDirty
         }
+
+        // Parse immediately on file open/tab switch
+        parseContent()
     }
 
     /// Get content from Rust - only call when actually needed (e.g., loading into NSTextView)
     func getContent() -> String {
         editor.get_content().toString()
+    }
+
+    // MARK: - Syntax Highlighting
+
+    /// Schedule debounced parsing after text changes
+    func scheduleHighlightUpdate() {
+        parseTimer?.invalidate()
+        parseTimer = Timer.scheduledTimer(withTimeInterval: parseDebounceInterval, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                self?.parseContent()
+            }
+        }
+    }
+
+    /// Parse content immediately (called after debounce or on file open)
+    func parseContent() {
+        let content = getContent()
+
+        // Skip parsing for very large files (> 1MB) to prevent UI freeze
+        guard content.utf8.count < 1_000_000 else {
+            highlightSpans = []
+            highlightVersion += 1
+            return
+        }
+
+        // Get packed spans from Rust: [start, end, kind, start, end, kind, ...]
+        let packed = parser.parse(content)
+        var spans: [HighlightSpan] = []
+        spans.reserveCapacity(Int(packed.len()) / 3)
+
+        var i: UInt = 0
+        while i + 2 < packed.len() {
+            if let start = packed.get(index: i),
+               let end = packed.get(index: i + 1),
+               let kind = packed.get(index: i + 2) {
+                spans.append(HighlightSpan(start: Int(start), end: Int(end), kind: kind))
+            }
+            i += 3
+        }
+
+        highlightSpans = spans
+        highlightVersion += 1
+    }
+
+    /// Reset parser state (call on tab switch)
+    func resetParser() {
+        parser.reset_parser()
+        highlightSpans = []
     }
 
 }

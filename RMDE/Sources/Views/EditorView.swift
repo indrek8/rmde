@@ -56,9 +56,124 @@ struct EditorView: NSViewRepresentable {
         // Only reload content when version changes (file open, tab switch)
         if context.coordinator.loadedVersion != editorState.contentVersion {
             context.coordinator.loadedVersion = editorState.contentVersion
+            context.coordinator.highlightVersion = -1  // Force highlight refresh
             let content = editorState.getContent()  // Single copy, only when needed
             textView.string = content
             textView.setSelectedRange(NSRange(location: 0, length: 0))
+        }
+
+        // Apply highlights when highlight version changes
+        if context.coordinator.highlightVersion != editorState.highlightVersion {
+            context.coordinator.highlightVersion = editorState.highlightVersion
+            applyHighlights(to: textView)
+        }
+    }
+
+    private func applyHighlights(to textView: NSTextView) {
+        guard let textStorage = textView.textStorage else { return }
+
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+
+        // Disable layout updates during attribute changes
+        textView.layoutManager?.ensureLayout(for: textView.textContainer!)
+
+        // Begin editing
+        textStorage.beginEditing()
+
+        // Reset to default style
+        let defaultFont = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        textStorage.setAttributes([
+            .font: defaultFont,
+            .foregroundColor: NSColor.textColor
+        ], range: fullRange)
+
+        // Apply each highlight span
+        for span in editorState.highlightSpans {
+            let range = NSRange(location: span.start, length: span.end - span.start)
+            guard range.location >= 0, range.location + range.length <= textStorage.length else { continue }
+
+            let attrs = attributesForKind(span.kind)
+            textStorage.addAttributes(attrs, range: range)
+        }
+
+        textStorage.endEditing()
+    }
+
+    private func attributesForKind(_ kind: UInt64) -> [NSAttributedString.Key: Any] {
+        let baseFont = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+
+        switch kind {
+        case HighlightSpan.heading1:
+            return [
+                .font: NSFont.monospacedSystemFont(ofSize: 24, weight: .bold),
+                .foregroundColor: NSColor.labelColor
+            ]
+        case HighlightSpan.heading2:
+            return [
+                .font: NSFont.monospacedSystemFont(ofSize: 20, weight: .bold),
+                .foregroundColor: NSColor.labelColor
+            ]
+        case HighlightSpan.heading3:
+            return [
+                .font: NSFont.monospacedSystemFont(ofSize: 18, weight: .semibold),
+                .foregroundColor: NSColor.labelColor
+            ]
+        case HighlightSpan.heading4, HighlightSpan.heading5, HighlightSpan.heading6:
+            return [
+                .font: NSFont.monospacedSystemFont(ofSize: 16, weight: .semibold),
+                .foregroundColor: NSColor.labelColor
+            ]
+        case HighlightSpan.headingMarker:
+            return [
+                .foregroundColor: NSColor.secondaryLabelColor
+            ]
+        case HighlightSpan.bold:
+            return [
+                .font: NSFont.monospacedSystemFont(ofSize: 14, weight: .bold)
+            ]
+        case HighlightSpan.italic:
+            let descriptor = baseFont.fontDescriptor.withSymbolicTraits(.italic)
+            let italicFont = NSFont(descriptor: descriptor, size: 14) ?? baseFont
+            return [.font: italicFont]
+        case HighlightSpan.codeInline:
+            return [
+                .font: baseFont,
+                .foregroundColor: NSColor.systemPink,
+                .backgroundColor: NSColor.quaternaryLabelColor
+            ]
+        case HighlightSpan.codeBlock, HighlightSpan.codeFence:
+            return [
+                .font: baseFont,
+                .foregroundColor: NSColor.systemGreen,
+                .backgroundColor: NSColor.quaternaryLabelColor
+            ]
+        case HighlightSpan.codeLanguage:
+            return [
+                .foregroundColor: NSColor.systemOrange
+            ]
+        case HighlightSpan.link:
+            return [
+                .foregroundColor: NSColor.linkColor,
+                .underlineStyle: NSUnderlineStyle.single.rawValue
+            ]
+        case HighlightSpan.linkUrl:
+            return [
+                .foregroundColor: NSColor.secondaryLabelColor
+            ]
+        case HighlightSpan.listMarker:
+            return [
+                .foregroundColor: NSColor.systemBlue
+            ]
+        case HighlightSpan.blockQuote:
+            return [
+                .foregroundColor: NSColor.systemGray
+            ]
+        case HighlightSpan.image:
+            return [
+                .foregroundColor: NSColor.systemPurple
+            ]
+        default:
+            return [:]
         }
     }
 
@@ -68,6 +183,7 @@ struct EditorView: NSViewRepresentable {
 
     class Coordinator: NSObject, NSTextViewDelegate {
         var loadedVersion: Int = -1  // Track which content version is loaded
+        var highlightVersion: Int = -1  // Track which highlight version is applied
 
         func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString text: String?) -> Bool {
             guard let rmdeTextView = textView as? RMDETextView,
