@@ -212,7 +212,7 @@ struct EditorView: NSViewRepresentable {
             ]
         case HighlightSpan.horizontalRule:
             return [
-                .foregroundColor: NSColor.separator
+                .foregroundColor: NSColor.separatorColor
             ]
 
         // Tables (GFM)
