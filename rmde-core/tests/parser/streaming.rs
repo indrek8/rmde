@@ -321,7 +321,7 @@ fn test_streaming_empty_chunks() {
 
     parser.append("# Heading");
     let spans2 = parser.append("");
-    assert!(spans2.len() > 0, "Should return spans for non-empty buffer");
+    assert!(!spans2.is_empty(), "Should return spans for non-empty buffer");
 }
 
 #[test]

@@ -2,6 +2,7 @@
 
 use crate::{DocumentId, Editor, MarkdownParser};
 
+#[allow(clippy::unnecessary_cast)]
 #[swift_bridge::bridge]
 mod ffi {
     extern "Rust" {

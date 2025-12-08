@@ -199,7 +199,7 @@ impl MarkdownParser {
             }
 
             let is_equals = next.chars().all(|c| c == '=');
-            let is_dashes = next.chars().all(|c| c == '-') && next.len() >= 1;
+            let is_dashes = next.chars().all(|c| c == '-') && !next.is_empty();
 
             if is_equals || is_dashes {
                 let start = line_starts[i];
@@ -329,13 +329,14 @@ impl MarkdownParser {
         // Split by pipes and check each cell
         let cells: Vec<&str> = if trimmed.starts_with('|') && trimmed.ends_with('|') {
             // Leading and trailing pipes: | --- | --- |
-            trimmed[1..trimmed.len()-1].split('|').collect()
+            trimmed.strip_prefix('|').unwrap_or(trimmed)
+                .strip_suffix('|').unwrap_or(trimmed).split('|').collect()
         } else if trimmed.starts_with('|') {
             // Leading pipe only: | --- | ---
-            trimmed[1..].split('|').collect()
+            trimmed.strip_prefix('|').unwrap_or(trimmed).split('|').collect()
         } else if trimmed.ends_with('|') {
             // Trailing pipe only: --- | --- |
-            trimmed[..trimmed.len()-1].split('|').collect()
+            trimmed.strip_suffix('|').unwrap_or(trimmed).split('|').collect()
         } else {
             // No leading/trailing pipes: --- | ---
             trimmed.split('|').collect()
@@ -625,8 +626,9 @@ impl MarkdownParser {
         while i < len {
             // Inline code: `code`, ``code``, etc.
             // Opening and closing backtick counts must match
-            if bytes[i] == b'`' {
-                if let Some((start, end)) = self.find_code_span(content, i) {
+            if bytes[i] == b'`'
+                && let Some((start, end)) = self.find_code_span(content, i)
+            {
                     // Add the content span (entire code including backticks)
                     spans.push(Span {
                         start,
@@ -656,9 +658,8 @@ impl MarkdownParser {
                         kind: SpanKind::MarkerCode,
                     });
 
-                    i = end;
-                    continue;
-                }
+                i = end;
+                continue;
             }
 
             i += 1;
@@ -930,27 +931,19 @@ impl MarkdownParser {
             }
 
             // Parse angle bracket autolinks: <https://...> or <email@...>
-            if bytes[i] == b'<' {
-                if let Some((start, end, kind)) = self.find_angle_autolink(content, i) {
-                    spans.push(Span { start, end, kind });
-                    i = end;
-                    continue;
-                }
+            if bytes[i] == b'<'
+                && let Some((start, end, kind)) = self.find_angle_autolink(content, i)
+            {
+                spans.push(Span { start, end, kind });
+                i = end;
+                continue;
             }
 
             // Parse GFM extended autolinks (bare URLs)
             // Check for https://, http://, or www.
-            if i + 7 < len && &bytes[i..i + 8] == b"https://" {
-                if let Some((start, end)) = self.find_bare_url(content, i) {
-                    spans.push(Span {
-                        start,
-                        end,
-                        kind: SpanKind::Autolink,
-                    });
-                    i = end;
-                    continue;
-                }
-            } else if i + 6 < len && &bytes[i..i + 7] == b"http://" {
+            if (i + 7 < len && &bytes[i..i + 8] == b"https://")
+                || (i + 6 < len && &bytes[i..i + 7] == b"http://")
+            {
                 if let Some((start, end)) = self.find_bare_url(content, i) {
                     spans.push(Span {
                         start,
@@ -969,16 +962,16 @@ impl MarkdownParser {
                     prev.is_ascii_whitespace() || prev == b'(' || prev == b'[' || prev == b'<'
                 };
 
-                if preceded_ok {
-                    if let Some((start, end)) = self.find_bare_url(content, i) {
-                        spans.push(Span {
-                            start,
-                            end,
-                            kind: SpanKind::Autolink,
-                        });
-                        i = end;
-                        continue;
-                    }
+                if preceded_ok
+                    && let Some((start, end)) = self.find_bare_url(content, i)
+                {
+                    spans.push(Span {
+                        start,
+                        end,
+                        kind: SpanKind::Autolink,
+                    });
+                    i = end;
+                    continue;
                 }
             }
 
@@ -1167,17 +1160,17 @@ impl MarkdownParser {
 
             if bytes[i] == b'$' {
                 // Check for block math $$
-                if i + 1 < bytes.len() && bytes[i + 1] == b'$' {
-                    if let Some(end_offset) = content[i + 2..].find("$$") {
-                        let end = i + 2 + end_offset + 2;
-                        spans.push(Span {
-                            start: i,
-                            end,
-                            kind: SpanKind::MathBlock,
-                        });
-                        i = end;
-                        continue;
-                    }
+                if i + 1 < bytes.len() && bytes[i + 1] == b'$'
+                    && let Some(end_offset) = content[i + 2..].find("$$")
+                {
+                    let end = i + 2 + end_offset + 2;
+                    spans.push(Span {
+                        start: i,
+                        end,
+                        kind: SpanKind::MathBlock,
+                    });
+                    i = end;
+                    continue;
                 }
                 // Inline math $
                 else if let Some(end_offset) = content[i + 1..].find('$') {
@@ -1213,20 +1206,18 @@ impl MarkdownParser {
                 continue;
             }
 
-            if bytes[i] == b'=' && bytes[i + 1] == b'=' {
-                if let Some(end_offset) = content[i + 2..].find("==") {
-                    // Check that we have content between the delimiters
-                    if end_offset > 0 {
-                        let end = i + 2 + end_offset + 2;
-                        spans.push(Span {
-                            start: i,
-                            end,
-                            kind: SpanKind::Highlight,
-                        });
-                        i = end;
-                        continue;
-                    }
-                }
+            if bytes[i] == b'=' && bytes[i + 1] == b'='
+                && let Some(end_offset) = content[i + 2..].find("==")
+                && end_offset > 0  // Check that we have content between the delimiters
+            {
+                let end = i + 2 + end_offset + 2;
+                spans.push(Span {
+                    start: i,
+                    end,
+                    kind: SpanKind::Highlight,
+                });
+                i = end;
+                continue;
             }
             i += 1;
         }
@@ -1386,10 +1377,10 @@ impl MarkdownParser {
     /// Compute whether a delimiter run can open or close emphasis
     /// Per CommonMark spec § 6.2
     fn compute_flanking(&self, char: char, preceded_by: Option<char>, followed_by: Option<char>) -> (bool, bool) {
-        let before_is_whitespace = preceded_by.map_or(true, |c| c.is_whitespace());
-        let before_is_punct = preceded_by.map_or(false, |c| c.is_ascii_punctuation());
-        let after_is_whitespace = followed_by.map_or(true, |c| c.is_whitespace());
-        let after_is_punct = followed_by.map_or(false, |c| c.is_ascii_punctuation());
+        let before_is_whitespace = preceded_by.is_none_or(char::is_whitespace);
+        let before_is_punct = preceded_by.is_some_and(|c| c.is_ascii_punctuation());
+        let after_is_whitespace = followed_by.is_none_or(char::is_whitespace);
+        let after_is_punct = followed_by.is_some_and(|c| c.is_ascii_punctuation());
 
         // Left-flanking: not followed by whitespace AND
         //   (not followed by punct OR preceded by whitespace/punct)

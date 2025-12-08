@@ -1,3 +1,6 @@
+// Allow unnecessary_cast warnings from swift-bridge generated code
+#![allow(clippy::unnecessary_cast)]
+
 mod document;
 mod editor;
 mod error;

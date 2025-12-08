@@ -86,7 +86,7 @@ fn test_emphasis_triple_asterisk() {
     let bold: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Bold).collect();
     let italic: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Italic).collect();
 
-    assert!(bold.len() >= 1 || italic.len() >= 1,
+    assert!(!bold.is_empty() || !italic.is_empty(),
             "Triple asterisk should create emphasis (found {} bold, {} italic)",
             bold.len(), italic.len());
 }

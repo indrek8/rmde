@@ -100,7 +100,7 @@ fn test_highlight_nested_not_supported() {
     let hl: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Highlight).collect();
     // This should find the first matching pair: "==outer ==inner=="
     // Nesting is not supported, so we match greedily
-    assert!(hl.len() >= 1, "Should find at least one highlight");
+    assert!(!hl.is_empty(), "Should find at least one highlight");
 }
 
 #[test]
@@ -111,5 +111,5 @@ fn test_highlight_adjacent() {
 
     let hl: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Highlight).collect();
     // Should match "==one==" first, then "==two=="
-    assert!(hl.len() >= 1, "Should handle adjacent highlights");
+    assert!(!hl.is_empty(), "Should handle adjacent highlights");
 }

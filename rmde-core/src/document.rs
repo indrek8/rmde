@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::path::PathBuf;
 
 use ropey::Rope;
@@ -205,7 +206,7 @@ impl Document {
         let text_len = text.len();
 
         // Sort selections by position (descending) to avoid offset issues
-        self.selections.sort_by(|a, b| b.start().cmp(&a.start()));
+        self.selections.sort_by_key(|s| Reverse(s.start()));
 
         for sel in &mut self.selections {
             // Delete any selected text first
@@ -234,7 +235,7 @@ impl Document {
 
     /// Delete character before cursor (backspace)
     pub fn delete_backward(&mut self) {
-        self.selections.sort_by(|a, b| b.start().cmp(&a.start()));
+        self.selections.sort_by_key(|s| Reverse(s.start()));
 
         for sel in &mut self.selections {
             if sel.is_cursor() {
@@ -264,7 +265,7 @@ impl Document {
 
     /// Delete character after cursor (delete key)
     pub fn delete_forward(&mut self) {
-        self.selections.sort_by(|a, b| b.start().cmp(&a.start()));
+        self.selections.sort_by_key(|s| Reverse(s.start()));
 
         for sel in &mut self.selections {
             if sel.is_cursor() {
@@ -310,13 +311,13 @@ impl Document {
         // Merge overlapping selections
         let mut merged: Vec<Selection> = Vec::with_capacity(self.selections.len());
         for sel in self.selections.drain(..) {
-            if let Some(last) = merged.last_mut() {
-                if sel.start() <= last.end() {
-                    // Overlapping - merge
-                    last.head = last.end().max(sel.end());
-                    last.anchor = last.start().min(sel.start());
-                    continue;
-                }
+            if let Some(last) = merged.last_mut()
+                && sel.start() <= last.end()
+            {
+                // Overlapping - merge
+                last.head = last.end().max(sel.end());
+                last.anchor = last.start().min(sel.start());
+                continue;
             }
             merged.push(sel);
         }
