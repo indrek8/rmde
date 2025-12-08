@@ -74,6 +74,10 @@ pub enum SpanKind {
     MathBlock = 83,        // $$...$$
     Highlight = 84,        // ==text==
 
+    // LLM Artifacts (Phase 6 - Optional)
+    ArtifactThinking = 90, // <antThinking>...</antThinking>
+    ArtifactMeta = 91,     // <antMeta>...</antMeta>
+
     // Markers (for ghost mode - these are the hidden characters)
     MarkerHeading = 100,       // # characters
     MarkerBold = 101,          // ** or __
@@ -710,6 +714,9 @@ impl MarkdownParser {
         self.parse_footnotes_optimized(content, spans, &skip_regions);
         self.parse_math_optimized(content, spans, &skip_regions);
         self.parse_highlight_optimized(content, spans, &skip_regions);
+
+        // Parse LLM artifacts (Phase 6 - Optional)
+        self.parse_artifacts_optimized(content, spans, &skip_regions);
     }
 
     /// Helper: Check if position is inside any skip region (binary search for performance)
@@ -1408,6 +1415,54 @@ impl MarkdownParser {
         (can_open, can_close)
     }
 
+    /// Parse Claude artifact blocks - OPTIMIZED
+    /// <antThinking>...</antThinking> and <antMeta>...</antMeta>
+    /// Uses precomputed skip_regions to avoid re-collecting code spans
+    fn parse_artifacts_optimized(&self, content: &str, spans: &mut Vec<Span>, skip_regions: &[(usize, usize)]) {
+        // Parse <antThinking>...</antThinking>
+        self.find_xml_tag(content, "antThinking", SpanKind::ArtifactThinking, spans, skip_regions);
+
+        // Parse <antMeta>...</antMeta>
+        self.find_xml_tag(content, "antMeta", SpanKind::ArtifactMeta, spans, skip_regions);
+    }
+
+    /// Find XML-style tags in content
+    /// Searches for <tag>...</tag> pairs and creates spans
+    fn find_xml_tag(
+        &self,
+        content: &str,
+        tag: &str,
+        kind: SpanKind,
+        spans: &mut Vec<Span>,
+        skip_regions: &[(usize, usize)],
+    ) {
+        let open_tag = format!("<{}>", tag);
+        let close_tag = format!("</{}>", tag);
+
+        let mut search_start = 0;
+        while let Some(start_offset) = content[search_start..].find(&open_tag) {
+            let abs_start = search_start + start_offset;
+
+            // Skip if inside code span
+            if Self::is_in_skip_region(abs_start, skip_regions) {
+                search_start = abs_start + 1;
+                continue;
+            }
+
+            if let Some(end_offset) = content[abs_start..].find(&close_tag) {
+                let abs_end = abs_start + end_offset + close_tag.len();
+                spans.push(Span {
+                    start: abs_start,
+                    end: abs_end,
+                    kind,
+                });
+                search_start = abs_end;
+            } else {
+                break;
+            }
+        }
+    }
+
     /// Clear cached tree (call when document changes significantly)
     pub fn reset(&mut self) {
         self.tree = None;
@@ -1516,5 +1571,81 @@ impl MarkdownParser {
 impl Default for MarkdownParser {
     fn default() -> Self {
         Self::new().expect("Failed to create markdown parser")
+    }
+}
+
+/// Parser for streaming LLM output that handles incomplete markdown
+pub struct StreamingParser {
+    parser: MarkdownParser,
+    buffer: String,
+}
+
+impl StreamingParser {
+    /// Create a new streaming parser
+    pub fn new() -> Option<Self> {
+        Some(Self {
+            parser: MarkdownParser::new()?,
+            buffer: String::new(),
+        })
+    }
+
+    /// Append a chunk of text and return safe (complete) spans
+    pub fn append(&mut self, chunk: &str) -> Vec<Span> {
+        self.buffer.push_str(chunk);
+        self.parser.reset();
+
+        let spans = self.parser.parse(&self.buffer);
+
+        // Filter out spans that might be incomplete (near buffer end)
+        // Use a 10 character safety margin
+        let safe_margin = 10;
+        let safe_end = self.buffer.len().saturating_sub(safe_margin);
+
+        spans.into_iter()
+            .filter(|s| s.end <= safe_end || self.is_complete_span(s))
+            .collect()
+    }
+
+    /// Check if a span appears complete (has proper closing delimiters)
+    fn is_complete_span(&self, span: &Span) -> bool {
+        if span.end > self.buffer.len() {
+            return false;
+        }
+
+        let text = &self.buffer[span.start..span.end];
+        match span.kind {
+            SpanKind::Bold => text.ends_with("**") || text.ends_with("__"),
+            SpanKind::Italic => text.ends_with("*") || text.ends_with("_"),
+            SpanKind::Strikethrough => text.ends_with("~~"),
+            SpanKind::CodeInline => text.ends_with("`"),
+            SpanKind::CodeBlock => text.contains("```") && text.matches("```").count() >= 2,
+            SpanKind::MathInline => text.ends_with("$"),
+            SpanKind::MathBlock => text.ends_with("$$"),
+            SpanKind::Highlight => text.ends_with("=="),
+            _ => true, // Block elements are generally safe
+        }
+    }
+
+    /// Get the current buffer content
+    pub fn buffer(&self) -> &str {
+        &self.buffer
+    }
+
+    /// Clear the buffer and reset state
+    pub fn clear(&mut self) {
+        self.buffer.clear();
+        self.parser.reset();
+    }
+
+    /// Get all spans including potentially incomplete ones
+    pub fn parse_all(&mut self) -> Vec<Span> {
+        self.parser.reset();
+        self.parser.parse(&self.buffer)
+    }
+}
+
+impl Default for StreamingParser {
+    fn default() -> Self {
+        Self::new().expect("Failed to create streaming parser")
     }
 }
