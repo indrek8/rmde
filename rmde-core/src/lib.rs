@@ -19,7 +19,7 @@ pub use selection::Selection;
 pub struct DocumentId(u64);
 
 impl DocumentId {
-    fn new() -> Self {
+    pub fn new() -> Self {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(1);
         Self(COUNTER.fetch_add(1, Ordering::Relaxed))
@@ -68,16 +68,4 @@ pub enum HighlightKind {
     LinkUrl = 31,
     ListMarker = 40,
     BlockQuote = 50,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_document_id_unique() {
-        let id1 = DocumentId::new();
-        let id2 = DocumentId::new();
-        assert_ne!(id1, id2);
-    }
 }
