@@ -12,11 +12,22 @@ A minimal, lightning-fast, plain-text editor for Markdown files. Built with a Ru
 ## Features
 
 - [x] Open and edit Markdown files
-- [x] Multiple tabs
+- [x] Multiple tabs with dirty indicators
 - [x] Native macOS UI (SwiftUI + TextKit 2)
-- [ ] Syntax highlighting
-- [ ] Multi-cursor editing
-- [ ] Undo/redo
+- [x] Native undo/redo (NSUndoManager)
+- [x] Syntax highlighting (tree-sitter)
+  - ATX and Setext headings
+  - Bold, italic, strikethrough
+  - Inline and fenced code blocks
+  - Links, images, autolinks
+  - Lists (bullet, numbered, task lists)
+  - Block quotes, horizontal rules
+  - GFM tables
+  - Extended syntax (highlights, math, footnotes)
+- [x] Status bar with line/column display
+- [ ] Ghost mode (hide/show markdown syntax)
+- [ ] Theme system (light/dark)
+- [ ] Find & replace
 
 ## Build & Run
 
@@ -39,18 +50,24 @@ open RMDE/RMDE.xcodeproj
 
 ## Architecture
 
+Hybrid approach: NSTextView handles editing natively, Rust handles what it's best at.
+
 ```
-┌─────────────────────────────────────┐
-│     SwiftUI/AppKit Frontend         │
-│     (TextKit 2, native menus)       │
-└─────────────────┬───────────────────┘
-                  │ swift-bridge FFI
-┌─────────────────▼───────────────────┐
-│         Rust Core (rmde-core)       │
-│  • ropey — O(log n) rope buffer     │
-│  • tree-sitter — incremental parse  │
-│  • Multi-cursor selections          │
-└─────────────────────────────────────┘
+┌─────────────────────────────────────────┐
+│         NSTextView (TextKit 2)          │
+│  • Native text editing                  │
+│  • Undo/redo (NSUndoManager)            │
+│  • Cursor & selection                   │
+│  • macOS integration (services, etc.)   │
+└──────────────────┬──────────────────────┘
+                   │ swift-bridge FFI
+┌──────────────────▼──────────────────────┐
+│            Rust Core (rmde-core)        │
+│  • tree-sitter syntax highlighting      │
+│  • Large file handling (rope)           │
+│  • Tab/document state management        │
+│  • File I/O                             │
+└─────────────────────────────────────────┘
 ```
 
 ## Project Structure
@@ -59,16 +76,29 @@ open RMDE/RMDE.xcodeproj
 rmde/
 ├── rmde-core/              # Rust library
 │   └── src/
-│       ├── lib.rs          # FFI exports
-│       ├── document.rs     # Rope buffer
+│       ├── lib.rs          # Public exports
+│       ├── ffi.rs          # swift-bridge FFI
+│       ├── document.rs     # Content storage, file I/O
 │       ├── editor.rs       # Tab management
-│       └── selection.rs    # Multi-cursor
-└── RMDE/                   # macOS app
-    └── Sources/
-        ├── App/            # EditorState
-        ├── Views/          # SwiftUI views
-        └── Bridge/         # Generated FFI
+│       ├── parser.rs       # tree-sitter markdown parsing
+│       └── selection.rs    # Selection utilities
+├── RMDE/                   # macOS app
+│   └── Sources/
+│       ├── App/            # EditorState (syncs with Rust)
+│       ├── Views/          # SwiftUI views
+│       └── Bridge/         # Generated FFI (swift-bridge)
+├── CLAUDE.md               # AI assistant context
+├── SPECS.md                # Technical specifications
+├── MARKDOWN-SYNTAX.md      # Markdown syntax reference
+└── PLAN.md                 # Implementation roadmap
 ```
+
+## Documentation
+
+- **[CLAUDE.md](CLAUDE.md)** — Context for AI assistants
+- **[SPECS.md](SPECS.md)** — Technical specifications
+- **[MARKDOWN-SYNTAX.md](MARKDOWN-SYNTAX.md)** — Comprehensive Markdown syntax reference
+- **[PLAN.md](PLAN.md)** — Implementation plan and roadmap
 
 ## License
 
