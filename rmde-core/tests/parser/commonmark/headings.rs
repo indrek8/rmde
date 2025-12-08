@@ -149,3 +149,4 @@ fn test_setext_headings_windows_line_endings() {
     assert_eq!(h1_mixed.len(), 1, "Should find H1 in mixed Windows line endings");
     assert_eq!(h2_mixed.len(), 1, "Should find H2 in mixed Windows line endings");
 }
+

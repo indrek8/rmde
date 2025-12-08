@@ -212,14 +212,36 @@ impl RMDEParser {
 
     /// Parse content and return packed spans: [start, end, kind, ...]
     fn parse(&mut self, content: &str) -> Vec<u64> {
-        let spans = self.inner.parse(content);
-        let mut result = Vec::with_capacity(spans.len() * 3);
-        for span in spans {
-            result.push(span.start as u64);
-            result.push(span.end as u64);
-            result.push(span.kind as u64);
+        // Skip parsing for very large files to prevent performance issues
+        if content.len() > 500_000 {
+            return Vec::new();
         }
-        result
+
+        // Skip empty content
+        if content.is_empty() {
+            return Vec::new();
+        }
+
+        // Use catch_unwind to prevent panics from crashing the app
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.inner.parse(content)
+        }));
+
+        match result {
+            Ok(spans) => {
+                let mut packed = Vec::with_capacity(spans.len() * 3);
+                for span in spans {
+                    packed.push(span.start as u64);
+                    packed.push(span.end as u64);
+                    packed.push(span.kind as u64);
+                }
+                packed
+            }
+            Err(_) => {
+                // Parser panicked, return empty spans
+                Vec::new()
+            }
+        }
     }
 
     fn reset_parser(&mut self) {

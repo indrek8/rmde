@@ -102,7 +102,8 @@ impl MarkdownParser {
     /// Create a new markdown parser
     pub fn new() -> Option<Self> {
         let mut parser = Parser::new();
-        parser.set_language(&tree_sitter_md::LANGUAGE.into()).ok()?;
+        let lang: tree_sitter::Language = tree_sitter_md::LANGUAGE.into();
+        parser.set_language(&lang).ok()?;
         Some(Self {
             parser,
             tree: None,
@@ -128,8 +129,13 @@ impl MarkdownParser {
         // Calculate hash for change detection
         let content_hash = Self::hash_content(content);
 
-        // Use incremental parsing if content is similar
-        let tree = if self.last_content_hash != 0 && self.tree.is_some() {
+        // Check if we should use incremental parsing
+        // Don't use incremental if previous tree was empty (children=0) - fixes issue where
+        // incremental parsing with empty old tree produces empty result tree
+        let use_incremental = self.last_content_hash != 0
+            && self.tree.as_ref().map_or(false, |t| t.root_node().child_count() > 0);
+
+        let tree = if use_incremental {
             // Incremental parsing - reuse previous tree
             match self.parser.parse(content, self.tree.as_ref()) {
                 Some(t) => t,
@@ -1210,14 +1216,19 @@ impl MarkdownParser {
                 && let Some(end_offset) = content[i + 2..].find("==")
                 && end_offset > 0  // Check that we have content between the delimiters
             {
-                let end = i + 2 + end_offset + 2;
-                spans.push(Span {
-                    start: i,
-                    end,
-                    kind: SpanKind::Highlight,
-                });
-                i = end;
-                continue;
+                // Highlights must be on a single line - don't span across newlines
+                // This prevents setext underlines (=====) from matching with ==text== elsewhere
+                let inner_content = &content[i + 2..i + 2 + end_offset];
+                if !inner_content.contains('\n') {
+                    let end = i + 2 + end_offset + 2;
+                    spans.push(Span {
+                        start: i,
+                        end,
+                        kind: SpanKind::Highlight,
+                    });
+                    i = end;
+                    continue;
+                }
             }
             i += 1;
         }
@@ -1472,6 +1483,12 @@ impl MarkdownParser {
         spans: &mut Vec<Span>,
         depth: usize,
     ) {
+        // Prevent stack overflow on deeply nested documents
+        const MAX_DEPTH: usize = 100;
+        if depth > MAX_DEPTH {
+            return;
+        }
+
         let node = cursor.node();
         let kind = node.kind();
         let start = node.start_byte();
@@ -1506,7 +1523,10 @@ impl MarkdownParser {
                     return None;
                 }
                 let text = &content[start..end.min(content.len())];
-                let level = text.chars().take_while(|&c| c == '#').count();
+                // Skip up to 3 leading spaces before counting # (CommonMark allows 0-3 spaces)
+                let trimmed = text.trim_start_matches(' ');
+                let level = trimmed.chars().take_while(|&c| c == '#').count();
+
                 match level {
                     1 => Some(SpanKind::Heading1),
                     2 => Some(SpanKind::Heading2),

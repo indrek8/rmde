@@ -354,8 +354,15 @@ final class EditorState: ObservableObject {
     func parseContent() {
         let content = getContent()
 
-        // Skip parsing for very large files (> 1MB) to prevent UI freeze
-        guard content.utf8.count < 1_000_000 else {
+        // Skip parsing for very large files (> 500KB) to prevent UI freeze
+        guard content.utf8.count < 500_000 else {
+            highlightSpans = []
+            highlightVersion += 1
+            return
+        }
+
+        // Skip parsing for empty content
+        guard !content.isEmpty else {
             highlightSpans = []
             highlightVersion += 1
             return
