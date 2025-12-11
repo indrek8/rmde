@@ -51,6 +51,11 @@ struct RMDEApp: App {
             CommandGroup(after: .toolbar) {
                 Toggle("Ghost Mode", isOn: $editorState.ghostMode)
                     .keyboardShortcut("g", modifiers: [.command, .shift])
+
+                Button("Toggle Theme (\(editorState.themeManager.currentMode.label))") {
+                    editorState.toggleTheme()
+                }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
             }
         }
     }
