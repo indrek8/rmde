@@ -182,6 +182,28 @@ MarkerTaskBox = 112
 
 ---
 
+## UI Features ✅ COMPLETE
+
+### Theme System (2025-12-11)
+
+- [x] `ThemeManager.swift` - ThemeMode enum with System/Light/Dark options
+- [x] Uses `NSApplication.shared.appearance` for app-wide theme
+- [x] Persists with `@AppStorage("themeMode")`
+- [x] View menu toggle with ⇧⌘T keyboard shortcut
+- [x] Status bar indicator showing current mode with SF Symbols
+
+### Find & Replace (2025-12-11)
+
+- [x] `FindState.swift` - State management for search/replace
+- [x] `FindPanelView.swift` - Floating panel UI below tab bar
+- [x] Real-time search with match counter ("X of Y")
+- [x] Previous/Next navigation (⌘G / ⇧⌘G)
+- [x] Case-sensitive toggle
+- [x] Replace single match and Replace All
+- [x] Keyboard shortcuts: ⌘F, ⌘G, ⇧⌘G, ⌘⌥F, Escape
+
+---
+
 ## Future Enhancements (Optional)
 
 These features were not in the original plan but could be added:
@@ -239,8 +261,9 @@ pub fn parse_incremental(&mut self, content: &str, edit: InputEdit) -> Vec<Span>
 ## Changelog
 
 ### 2025-12-11
-- Verified all features complete
-- 256+ tests passing
+- Verified all parser features complete (256+ tests passing)
+- Implemented theme system (System/Light/Dark modes)
+- Implemented find & replace with floating panel UI
 - Updated documentation to reflect actual implementation status
 
 ### 2025-12-08 - 2025-12-10
