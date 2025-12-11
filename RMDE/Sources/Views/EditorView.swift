@@ -47,6 +47,9 @@ struct EditorView: NSViewRepresentable {
 
         scrollView.documentView = textView
 
+        // Store textView reference in editorState for find/replace
+        editorState.textView = textView
+
         return scrollView
     }
 

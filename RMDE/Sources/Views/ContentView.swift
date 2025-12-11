@@ -8,6 +8,11 @@ struct ContentView: View {
             // Tab bar
             TabBarView()
 
+            // Find panel (conditionally shown)
+            if editorState.findState.isVisible {
+                FindPanelView()
+            }
+
             // Editor
             EditorView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -16,6 +21,14 @@ struct ContentView: View {
             StatusBarView()
         }
         .frame(minWidth: 600, minHeight: 400)
+        .onKeyPress(.escape) { _ in
+            if editorState.findState.isVisible {
+                editorState.findState.isVisible = false
+                editorState.findState.reset()
+                return .handled
+            }
+            return .ignored
+        }
     }
 }
 
