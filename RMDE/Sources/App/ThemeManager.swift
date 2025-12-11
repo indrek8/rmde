@@ -60,11 +60,13 @@ class ThemeManager: ObservableObject {
     }
 
     init() {
-        // Load saved theme mode or default to system
+        // Must initialize currentMode before accessing savedThemeMode
+        // Use a default first, then update after
+        currentMode = .system
+
+        // Load saved theme mode
         if let mode = ThemeMode(rawValue: savedThemeMode) {
             currentMode = mode
-        } else {
-            currentMode = .system
         }
         // Apply the theme on initialization
         currentMode.apply()

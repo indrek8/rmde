@@ -21,7 +21,7 @@ struct ContentView: View {
             StatusBarView()
         }
         .frame(minWidth: 600, minHeight: 400)
-        .onKeyPress(.escape) { _ in
+        .onKeyPress(.escape) {
             if editorState.findState.isVisible {
                 editorState.findState.isVisible = false
                 editorState.findState.reset()

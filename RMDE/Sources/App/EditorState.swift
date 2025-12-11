@@ -117,7 +117,7 @@ final class EditorState: ObservableObject {
     private(set) var highlightSpans: [HighlightSpan] = []
 
     // Find & Replace state
-    let findState = FindState()
+    var findState = FindState()
 
     // Weak reference to text view for find/replace operations
     weak var textView: NSTextView?
