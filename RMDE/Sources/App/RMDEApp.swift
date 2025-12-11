@@ -47,6 +47,11 @@ struct RMDEApp: App {
                 }
                 .keyboardShortcut("[", modifiers: [.command, .shift])
             }
+
+            CommandGroup(after: .toolbar) {
+                Toggle("Ghost Mode", isOn: $editorState.ghostMode)
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
+            }
         }
     }
 }

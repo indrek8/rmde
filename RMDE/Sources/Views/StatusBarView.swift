@@ -10,6 +10,24 @@ struct StatusBarView: View {
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
 
+            Divider()
+                .frame(height: 12)
+
+            // Ghost mode toggle
+            Button(action: {
+                editorState.ghostMode.toggle()
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: editorState.ghostMode ? "eye.slash" : "eye")
+                        .font(.system(size: 10))
+                    Text(editorState.ghostMode ? "Ghost" : "Markup")
+                        .font(.system(size: 11))
+                }
+                .foregroundColor(editorState.ghostMode ? .accentColor : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help(editorState.ghostMode ? "Show markdown syntax (⇧⌘G)" : "Hide markdown syntax (⇧⌘G)")
+
             Spacer()
 
             // Line:Column
