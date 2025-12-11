@@ -107,6 +107,9 @@ final class EditorState: ObservableObject {
     @Published var tabs: [Tab] = []
     @Published var activeTabId: UInt64 = 0
 
+    // Ghost mode - hides markdown syntax markers when not editing
+    @Published var ghostMode: Bool = false
+
     // Highlight spans - not @Published to avoid excessive updates
     private(set) var highlightSpans: [HighlightSpan] = []
 
