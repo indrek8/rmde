@@ -122,6 +122,48 @@ fn test_setext_vs_thematic_break() {
 }
 
 #[test]
+fn test_setext_h1_vs_h2_distinction() {
+    // Regression test for bug where setext headings always returned H1
+    let mut parser = MarkdownParser::new().unwrap();
+
+    // Test H1 specifically
+    let content_h1 = "This is H1\n==========";
+    let spans_h1 = parser.parse(content_h1);
+    let h1_spans: Vec<_> = spans_h1.iter().filter(|s| s.kind == SpanKind::Heading1).collect();
+    let h2_spans: Vec<_> = spans_h1.iter().filter(|s| s.kind == SpanKind::Heading2).collect();
+    assert_eq!(h1_spans.len(), 1, "Should find exactly 1 H1 with = underline");
+    assert_eq!(h2_spans.len(), 0, "Should find no H2 with = underline");
+
+    // Test H2 specifically
+    parser.reset();
+    let content_h2 = "This is H2\n----------";
+    let spans_h2 = parser.parse(content_h2);
+    let h1_spans: Vec<_> = spans_h2.iter().filter(|s| s.kind == SpanKind::Heading1).collect();
+    let h2_spans: Vec<_> = spans_h2.iter().filter(|s| s.kind == SpanKind::Heading2).collect();
+    assert_eq!(h1_spans.len(), 0, "Should find no H1 with - underline");
+    assert_eq!(h2_spans.len(), 1, "Should find exactly 1 H2 with - underline");
+
+    // Test both in same document
+    parser.reset();
+    let content_both = "Heading One\n===========\n\nHeading Two\n-----------";
+    let spans_both = parser.parse(content_both);
+    let h1_spans: Vec<_> = spans_both.iter().filter(|s| s.kind == SpanKind::Heading1).collect();
+    let h2_spans: Vec<_> = spans_both.iter().filter(|s| s.kind == SpanKind::Heading2).collect();
+    assert_eq!(h1_spans.len(), 1, "Should find exactly 1 H1");
+    assert_eq!(h2_spans.len(), 1, "Should find exactly 1 H2");
+
+    // Verify the H1 span contains = underline
+    let h1_text = &content_both[h1_spans[0].start..h1_spans[0].end];
+    assert!(h1_text.contains('='), "H1 span should contain = characters");
+    assert!(!h1_text.contains('-') || h1_text.contains("Heading One"), "H1 should not be confused with -");
+
+    // Verify the H2 span contains - underline
+    let h2_text = &content_both[h2_spans[0].start..h2_spans[0].end];
+    assert!(h2_text.contains('-'), "H2 span should contain - characters");
+    assert!(!h2_text.contains('='), "H2 should not contain = characters");
+}
+
+#[test]
 fn test_setext_headings_windows_line_endings() {
     let mut parser = MarkdownParser::new().unwrap();
 
