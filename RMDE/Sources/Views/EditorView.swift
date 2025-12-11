@@ -65,9 +65,11 @@ struct EditorView: NSViewRepresentable {
             textView.setSelectedRange(NSRange(location: 0, length: 0))
         }
 
-        // Apply highlights when highlight version changes
-        if context.coordinator.highlightVersion != editorState.highlightVersion {
+        // Apply highlights when highlight version changes OR ghost mode changes
+        if context.coordinator.highlightVersion != editorState.highlightVersion ||
+           context.coordinator.ghostMode != editorState.ghostMode {
             context.coordinator.highlightVersion = editorState.highlightVersion
+            context.coordinator.ghostMode = editorState.ghostMode
             applyHighlights(to: textView)
         }
     }
@@ -298,6 +300,7 @@ struct EditorView: NSViewRepresentable {
     class Coordinator: NSObject, NSTextViewDelegate {
         var loadedVersion: Int = -1  // Track which content version is loaded
         var highlightVersion: Int = -1  // Track which highlight version is applied
+        var ghostMode: Bool = false  // Track ghost mode state
 
         func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString text: String?) -> Bool {
             guard let rmdeTextView = textView as? RMDETextView,
