@@ -67,9 +67,9 @@ Implementing syntax defined in MARKDOWN-SYNTAX.md:
 
 | Standard | Coverage | Status |
 |----------|----------|--------|
-| **CommonMark v0.31.2** | Base specification | ✅ Partial |
-| **GitHub Flavored Markdown** | Tables, strikethrough, task lists, autolinks | ✅ Partial |
-| **Extended Syntax** | Footnotes, definition lists, math | ⏳ Planned |
+| **CommonMark v0.31.2** | Base specification | ✅ Complete |
+| **GitHub Flavored Markdown** | Tables, strikethrough, task lists, autolinks | ✅ Complete |
+| **Extended Syntax** | Footnotes, math, highlighting | ✅ Complete |
 | **LLM Output Patterns** | Streaming, code blocks, artifacts | ⏳ Planned |
 
 ### Dependencies
@@ -474,19 +474,18 @@ Compare rendered output against reference screenshots:
 - [x] Blockquotes
 - [x] Thematic breaks
 
-#### Phase 3.2: GFM Extensions ⏳
+#### Phase 3.2: GFM Extensions ✅
 
-- [ ] Tables (with alignment)
-- [ ] Strikethrough
-- [ ] Task lists
-- [ ] Autolinks (extended)
+- [x] Tables (with alignment) - 21 tests
+- [x] Strikethrough - 18 tests
+- [x] Task lists - 16 tests
+- [x] Autolinks (extended) - 23 tests
 
-#### Phase 3.3: Extended Syntax ⏳
+#### Phase 3.3: Extended Syntax ✅
 
-- [ ] Footnotes
-- [ ] Definition lists
-- [ ] Math blocks (LaTeX)
-- [ ] Subscript/superscript
+- [x] Footnotes - 8 tests
+- [x] Math blocks (inline/display) - 11 tests
+- [x] Highlighting (==text==) - 12 tests
 
 #### Phase 3.4: LLM Patterns ⏳
 
@@ -520,9 +519,18 @@ Compare rendered output against reference screenshots:
 
 ---
 
-## Phase 4: Show/Hide Markdown
+## Phase 4: Show/Hide Markdown ✅ COMPLETE
 
 "Ghost mode" — toggle syntax visibility without text reflow.
+
+### Status: Implemented (2025-12-11)
+
+- [x] 10 marker SpanKind variants (100-112)
+- [x] Separate marker spans emitted for all formatting types
+- [x] Swift constants defined in EditorState.swift
+- [x] Swift styling in EditorView.swift (gray color when visible)
+- [x] Toggle via View menu (⇧⌘G) and status bar button
+- [x] 27 marker-specific tests
 
 ### Concept
 
@@ -531,62 +539,102 @@ Compare rendered output against reference screenshots:
 - Show OFF: foreground = background (invisible)
 - Monospace font ensures no position shift
 
-### Syntax Marker Spans
-
-**Reference:** See [MARKDOWN-SYNTAX.md](MARKDOWN-SYNTAX.md) for complete syntax definitions.
-
-These spans identify syntax markers that can be hidden in "ghost mode":
+### Marker SpanKinds
 
 | Markdown | Kind | Hidden Characters |
 |----------|------|-------------------|
-| `# ` | HeadingMark | `#` + space |
-| `**` | BoldMark | Both `**` delimiters |
-| `*` | ItalicMark | Both `*` delimiters |
-| `` ` `` | CodeMark | Both backticks |
-| `[]()` | LinkMark | `[`, `]`, `(`, `)` |
-| `- ` | ListMark | `-` + space |
+| `# ` | MarkerHeading (100) | `#` + space |
+| `**` | MarkerBold (101) | Both `**` delimiters |
+| `*` | MarkerItalic (102) | Both `*` delimiters |
+| `~~` | MarkerStrikethrough (104) | Both `~~` delimiters |
+| `` ` `` | MarkerCode (105) | Backticks |
+| `[]()` | MarkerLink (107) | `[`, `]`, `(`, `)` |
+| `![]()` | MarkerImage (108) | `!`, `[`, `]`, `(`, `)` |
+| `- ` | MarkerListBullet (109) | `-`, `*`, `+` |
+| `1. ` | MarkerListNumber (110) | Number + `.` or `)` |
+| `[ ]` | MarkerTaskBox (112) | `[ ]` or `[x]` |
 
-*Full syntax specification, including edge cases and parsing rules, documented in [MARKDOWN-SYNTAX.md](MARKDOWN-SYNTAX.md).*
+*Full syntax specification documented in [MARKDOWN-SYNTAX.md](MARKDOWN-SYNTAX.md).*
 
 ### Implementation
 
 ```swift
-func applyGhostStyling(visible: Bool) {
-    let spans = editor.get_marker_spans()
-    for span in spans {
-        let range = NSRange(location: span.start, length: span.end - span.start)
-        let color = visible ? NSColor.gray : textView.backgroundColor
-        storage.addAttribute(.foregroundColor, value: color, range: range)
+// EditorState.swift
+@Published var ghostMode: Bool = false
+
+// EditorView.swift - applies styling based on ghostMode
+case HighlightSpan.markerBold, HighlightSpan.markerItalic, ...:
+    if editorState.ghostMode {
+        return [.foregroundColor: textView.backgroundColor]  // Hide
+    } else {
+        return [.foregroundColor: NSColor.systemGray]  // Show
     }
-}
 ```
 
 ---
 
-## Phase 5: Polish
+## Phase 5: Polish ✅ PARTIAL
 
-### Theme System
+### Theme System ✅ COMPLETE (2025-12-11)
+
+- [x] `ThemeManager.swift` - ThemeMode enum with System/Light/Dark options
+- [x] Uses `NSApplication.shared.appearance` for app-wide theme override
+- [x] Persists with `@AppStorage("themeMode")`
+- [x] View menu toggle with ⇧⌘T keyboard shortcut
+- [x] Status bar indicator showing current mode with SF Symbols (sun/moon/half-circle)
+- [x] Cycles: System → Light → Dark → System
 
 ```swift
-struct EditorTheme: Codable {
-    let name: String
-    let background: ColorHex
-    let foreground: ColorHex
-    let selection: ColorHex
-    let syntax: SyntaxColors
+enum ThemeMode: String, CaseIterable {
+    case system, light, dark
+
+    func apply() {
+        switch self {
+        case .system: NSApplication.shared.appearance = nil
+        case .light: NSApplication.shared.appearance = NSAppearance(named: .aqua)
+        case .dark: NSApplication.shared.appearance = NSAppearance(named: .darkAqua)
+        }
+    }
+}
+
+@MainActor
+class ThemeManager: ObservableObject {
+    @AppStorage("themeMode") private var savedThemeMode: String = "system"
+    @Published var currentMode: ThemeMode
 }
 ```
 
-### Find & Replace
+### Find & Replace ✅ COMPLETE (2025-12-11)
+
+- [x] `FindState.swift` - State management (searchText, replaceText, matchRanges, currentMatchIndex)
+- [x] `FindPanelView.swift` - Floating panel UI below tab bar
+- [x] Real-time search with match counter ("X of Y")
+- [x] Case-sensitive toggle
+- [x] Replace single match and Replace All
+- [x] Escape key closes panel
 
 | Shortcut | Action |
 |----------|--------|
-| Cmd+F | Open find bar |
-| Cmd+G | Find next |
-| Cmd+Shift+G | Find previous |
-| Cmd+Option+F | Find and replace |
+| ⌘F | Open find panel |
+| ⌘G | Find next |
+| ⇧⌘G | Find previous |
+| ⌘⌥F | Open find & replace |
+| Escape | Close panel |
 
-### Window State Persistence
+```swift
+@MainActor
+class FindState: ObservableObject {
+    @Published var isVisible = false
+    @Published var showReplace = false
+    @Published var searchText = ""
+    @Published var replaceText = ""
+    @Published var matchRanges: [NSRange] = []
+    @Published var currentMatchIndex = 0
+    @Published var caseSensitive = true
+}
+```
+
+### Window State Persistence ⏳ Planned
 
 ```swift
 struct WindowState: Codable {
