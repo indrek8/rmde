@@ -116,6 +116,12 @@ final class EditorState: ObservableObject {
     // Highlight spans - not @Published to avoid excessive updates
     private(set) var highlightSpans: [HighlightSpan] = []
 
+    // Find & Replace state
+    let findState = FindState()
+
+    // Weak reference to text view for find/replace operations
+    weak var textView: NSTextView?
+
     init() {
         editor = RMDEEditor()
         parser = RMDEParser()
@@ -403,6 +409,106 @@ final class EditorState: ObservableObject {
     func resetParser() {
         parser.reset_parser()
         highlightSpans = []
+    }
+
+    // MARK: - Find & Replace
+
+    /// Perform find operation with the given search term
+    func performFind(_ term: String) {
+        guard !term.isEmpty else {
+            findState.matchRanges = []
+            findState.currentMatchIndex = 0
+            return
+        }
+
+        let content = getContent()
+        findState.matchRanges = findAll(term, caseSensitive: findState.caseSensitive, in: content)
+
+        // Reset to first match
+        findState.currentMatchIndex = 0
+
+        // Select and scroll to first match
+        if findState.matchCount > 0 {
+            selectMatch(at: 0)
+        }
+    }
+
+    /// Find all occurrences of a search term
+    private func findAll(_ term: String, caseSensitive: Bool, in content: String) -> [NSRange] {
+        let nsContent = content as NSString
+        var ranges: [NSRange] = []
+        var searchRange = NSRange(location: 0, length: nsContent.length)
+        let options: NSString.CompareOptions = caseSensitive ? [] : .caseInsensitive
+
+        while searchRange.location < nsContent.length {
+            let foundRange = nsContent.range(of: term, options: options, range: searchRange)
+            if foundRange.location == NSNotFound { break }
+            ranges.append(foundRange)
+            searchRange.location = foundRange.location + foundRange.length
+            searchRange.length = nsContent.length - searchRange.location
+        }
+
+        return ranges
+    }
+
+    /// Move to next match
+    func findNext() {
+        guard findState.matchCount > 0 else { return }
+        findState.nextMatch()
+        selectMatch(at: findState.currentMatchIndex)
+    }
+
+    /// Move to previous match
+    func findPrevious() {
+        guard findState.matchCount > 0 else { return }
+        findState.previousMatch()
+        selectMatch(at: findState.currentMatchIndex)
+    }
+
+    /// Select and scroll to match at given index
+    private func selectMatch(at index: Int) {
+        guard index >= 0 && index < findState.matchRanges.count,
+              let textView = textView else { return }
+
+        let range = findState.matchRanges[index]
+        textView.setSelectedRange(range)
+        textView.scrollRangeToVisible(range)
+    }
+
+    /// Replace the current match with replacement text
+    func replaceCurrentMatch() {
+        guard let currentMatch = findState.currentMatch,
+              let textView = textView,
+              !findState.searchText.isEmpty else { return }
+
+        let replacement = findState.replaceText
+
+        // Replace text in the text view
+        textView.replaceCharacters(in: currentMatch, with: replacement)
+
+        // Update Rust editor state
+        applyEdit(pos: currentMatch.location, deleteLen: currentMatch.length, text: replacement)
+
+        // Re-run find to update match positions
+        performFind(findState.searchText)
+    }
+
+    /// Replace all matches with replacement text
+    func replaceAllMatches() {
+        guard !findState.searchText.isEmpty,
+              !findState.matchRanges.isEmpty,
+              let textView = textView else { return }
+
+        let replacement = findState.replaceText
+
+        // Replace from end to beginning to maintain range validity
+        for range in findState.matchRanges.reversed() {
+            textView.replaceCharacters(in: range, with: replacement)
+            applyEdit(pos: range.location, deleteLen: range.length, text: replacement)
+        }
+
+        // Re-run find to update (should have no matches now if replacing with different text)
+        performFind(findState.searchText)
     }
 
 }
