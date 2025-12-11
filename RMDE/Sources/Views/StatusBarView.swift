@@ -28,6 +28,24 @@ struct StatusBarView: View {
             .buttonStyle(.plain)
             .help(editorState.ghostMode ? "Show markdown syntax (⇧⌘G)" : "Hide markdown syntax (⇧⌘G)")
 
+            Divider()
+                .frame(height: 12)
+
+            // Theme toggle
+            Button(action: {
+                editorState.toggleTheme()
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: editorState.themeManager.currentMode.iconName)
+                        .font(.system(size: 10))
+                    Text(editorState.themeManager.currentMode.label)
+                        .font(.system(size: 11))
+                }
+                .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Toggle theme: \(editorState.themeManager.currentMode.label) (⇧⌘T)")
+
             Spacer()
 
             // Line:Column

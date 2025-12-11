@@ -110,6 +110,9 @@ final class EditorState: ObservableObject {
     // Ghost mode - hides markdown syntax markers when not editing
     @Published var ghostMode: Bool = false
 
+    // Theme manager - handles light/dark/system theme switching
+    var themeManager = ThemeManager()
+
     // Highlight spans - not @Published to avoid excessive updates
     private(set) var highlightSpans: [HighlightSpan] = []
 
@@ -117,6 +120,12 @@ final class EditorState: ObservableObject {
         editor = RMDEEditor()
         parser = RMDEParser()
         syncFromRust()
+    }
+
+    // MARK: - Theme Management
+
+    func toggleTheme() {
+        themeManager.toggleTheme()
     }
 
     // MARK: - Tab Management
