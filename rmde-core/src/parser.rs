@@ -66,6 +66,7 @@ pub enum SpanKind {
 
     // Other
     Emphasis = 70,  // Generic emphasis marker (* or _)
+    Paragraph = 71, // Paragraph (structural element)
 
     // Extended Syntax (Phase 4)
     FootnoteRef = 80,      // [^1]
@@ -2074,6 +2075,7 @@ impl MarkdownParser {
             // Block elements
             "block_quote" => Some(SpanKind::BlockQuote),
             "thematic_break" => Some(SpanKind::HorizontalRule),
+            "paragraph" => Some(SpanKind::Paragraph),
 
             // Inline markers - these are the actual * and ` characters
             // We'll use post-processing to find bold/italic/code ranges
