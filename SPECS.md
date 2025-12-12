@@ -161,6 +161,10 @@ pub enum SpanKind {
     // Block elements
     BlockQuote = 50,          // MARKDOWN-SYNTAX.md § Blockquotes
     HorizontalRule = 51,      // MARKDOWN-SYNTAX.md § Thematic Breaks
+    HtmlBlock = 52,           // HTML block detection
+
+    // Structural
+    Paragraph = 71,           // Structural paragraph spans
 
     // Tables (GFM) - future
     // TableHeader, TableDelimiter, TableCell

@@ -58,6 +58,7 @@ pub enum SpanKind {
     // Block elements
     BlockQuote = 50,
     HorizontalRule = 51,
+    HtmlBlock = 52,
 
     // Tables (GFM)
     TableHeader = 60,
@@ -66,6 +67,7 @@ pub enum SpanKind {
 
     // Other
     Emphasis = 70,  // Generic emphasis marker (* or _)
+    Paragraph = 71, // Paragraph (structural element)
 
     // Extended Syntax (Phase 4)
     FootnoteRef = 80,      // [^1]
@@ -199,34 +201,41 @@ impl MarkdownParser {
         let lines: Vec<&str> = content.lines().collect();
 
         let mut i = 0;
-        while i + 1 < lines.len() {
-            let current = lines[i];
-            let next = lines[i + 1];
-
-            if current.is_empty() || next.is_empty() {
+        while i < lines.len() {
+            // Check if current line is a setext underline
+            let line = lines[i];
+            if line.is_empty() {
                 i += 1;
                 continue;
             }
 
-            let is_equals = next.chars().all(|c| c == '=');
-            let is_dashes = next.chars().all(|c| c == '-') && !next.is_empty();
+            let is_equals = line.chars().all(|c| c == '=');
+            let is_dashes = line.chars().all(|c| c == '-') && !line.is_empty();
 
             if is_equals || is_dashes {
-                let start = line_starts[i];
-                // End is start of line after underline, or end of content
-                let end = if i + 2 < line_starts.len() {
-                    line_starts[i + 2].saturating_sub(1)  // Don't include final newline
-                } else {
-                    content.len()
-                };
+                // This is a potential setext underline
+                // Find the start of the heading text (scan backwards for non-empty lines)
+                let mut heading_start_line = i;
+                while heading_start_line > 0 && !lines[heading_start_line - 1].is_empty() {
+                    heading_start_line -= 1;
+                }
 
-                spans.push(Span {
-                    start,
-                    end,
-                    kind: if is_equals { SpanKind::Heading1 } else { SpanKind::Heading2 },
-                });
-                i += 2;
-                continue;
+                // Make sure we have at least one line of heading text
+                if heading_start_line < i {
+                    let start = line_starts[heading_start_line];
+                    // End is start of line after underline, or end of content
+                    let end = if i + 1 < line_starts.len() {
+                        line_starts[i + 1].saturating_sub(1)  // Don't include final newline
+                    } else {
+                        content.len()
+                    };
+
+                    spans.push(Span {
+                        start,
+                        end,
+                        kind: if is_equals { SpanKind::Heading1 } else { SpanKind::Heading2 },
+                    });
+                }
             }
             i += 1;
         }
@@ -728,7 +737,8 @@ impl MarkdownParser {
         while i < len {
             // Inline code: `code`, ``code``, etc.
             // Opening and closing backtick counts must match
-            if bytes[i] == b'`'
+            // Skip escaped backticks
+            if bytes[i] == b'`' && !Self::is_escaped(content, i)
                 && let Some((start, end)) = self.find_code_span(content, i)
             {
                     // Add the content span (entire code including backticks)
@@ -839,6 +849,29 @@ impl MarkdownParser {
         }).is_ok()
     }
 
+    /// Helper: Check if a character at position is escaped with backslash
+    /// Per CommonMark spec: A backslash before an ASCII punctuation character escapes it
+    fn is_escaped(content: &str, pos: usize) -> bool {
+        if pos == 0 {
+            return false;
+        }
+
+        let bytes = content.as_bytes();
+
+        // Count preceding backslashes
+        let mut backslash_count = 0;
+        let mut check_pos = pos;
+
+        while check_pos > 0 && bytes[check_pos - 1] == b'\\' {
+            backslash_count += 1;
+            check_pos -= 1;
+        }
+
+        // Odd number of backslashes means the character is escaped
+        // (even number means the backslashes escape each other)
+        backslash_count % 2 == 1
+    }
+
     /// Parse strikethrough formatting (~~text~~) - OPTIMIZED
     /// Finds matching pairs of ~~ delimiters
     /// Uses precomputed skip_regions to avoid re-collecting code spans
@@ -849,6 +882,12 @@ impl MarkdownParser {
         while i + 1 < bytes.len() {
             // Skip positions inside code spans
             if Self::is_in_skip_region(i, skip_regions) {
+                i += 1;
+                continue;
+            }
+
+            // Skip escaped tildes
+            if Self::is_escaped(content, i) {
                 i += 1;
                 continue;
             }
@@ -916,6 +955,12 @@ impl MarkdownParser {
         while i < len {
             // Skip if inside code span
             if Self::is_in_skip_region(i, skip_regions) {
+                i += 1;
+                continue;
+            }
+
+            // Skip escaped characters
+            if Self::is_escaped(content, i) {
                 i += 1;
                 continue;
             }
@@ -1299,6 +1344,12 @@ impl MarkdownParser {
                 continue;
             }
 
+            // Skip escaped characters
+            if Self::is_escaped(content, i) {
+                i += 1;
+                continue;
+            }
+
             // Parse angle bracket autolinks: <https://...> or <email@...>
             if bytes[i] == b'<'
                 && let Some((start, end, kind)) = self.find_angle_autolink(content, i)
@@ -1338,6 +1389,44 @@ impl MarkdownParser {
                         start,
                         end,
                         kind: SpanKind::Autolink,
+                    });
+                    i = end;
+                    continue;
+                }
+            }
+
+            // Parse GFM bare email addresses (user@example.com)
+            // Look for @ symbol and check if it's a valid email
+            if bytes[i] == b'@' && i > 0 {
+                // Scan backwards to find the start of the email (before @)
+                let mut start = i;
+                while start > 0 {
+                    let ch = bytes[start - 1];
+                    if ch.is_ascii_alphanumeric() || ch == b'.' || ch == b'-' || ch == b'_' || ch == b'+' {
+                        start -= 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                // Scan forwards to find the end of the email (after @)
+                let mut end = i + 1;
+                while end < len {
+                    let ch = bytes[end];
+                    if ch.is_ascii_alphanumeric() || ch == b'.' || ch == b'-' {
+                        end += 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                // Validate that we have a reasonable email pattern
+                let potential_email = &content[start..end];
+                if self.is_valid_email(potential_email) {
+                    spans.push(Span {
+                        start,
+                        end,
+                        kind: SpanKind::AutolinkEmail,
                     });
                     i = end;
                     continue;
@@ -1575,23 +1664,58 @@ impl MarkdownParser {
                 continue;
             }
 
+            // Skip escaped equals signs
+            if Self::is_escaped(content, i) {
+                i += 1;
+                continue;
+            }
+
             if bytes[i] == b'=' && bytes[i + 1] == b'='
                 && let Some(end_offset) = content[i + 2..].find("==")
                 && end_offset > 0  // Check that we have content between the delimiters
             {
-                // Highlights must be on a single line - don't span across newlines
-                // This prevents setext underlines (=====) from matching with ==text== elsewhere
-                let inner_content = &content[i + 2..i + 2 + end_offset];
-                if !inner_content.contains('\n') {
-                    let end = i + 2 + end_offset + 2;
-                    spans.push(Span {
-                        start: i,
-                        end,
-                        kind: SpanKind::Highlight,
-                    });
-                    i = end;
-                    continue;
+                let end = i + 2 + end_offset + 2;
+                let content_between = &content[i + 2..i + 2 + end_offset];
+
+                // Check if the closing == is part of a setext underline (line of only '=')
+                // Setext underlines are lines that contain ONLY '=' characters (at least 3)
+                // Find the line containing the closing ==
+                if let Some(closing_line_start) = content[..i + 2 + end_offset].rfind('\n') {
+                    let closing_line_start = closing_line_start + 1;
+                    let closing_line_end = content[i + 2 + end_offset..].find('\n')
+                        .map(|pos| i + 2 + end_offset + pos)
+                        .unwrap_or(content.len());
+                    let closing_line = &content[closing_line_start..closing_line_end];
+
+                    // If the closing line is all '=' (setext underline), don't treat as highlight
+                    if closing_line.chars().all(|c| c == '=' || c.is_whitespace())
+                        && closing_line.chars().filter(|c| *c == '=').count() >= 3 {
+                        i += 1;
+                        continue;
+                    }
                 }
+
+                // Also check opening line for setext pattern
+                if let Some(opening_line_end) = content[i..].find('\n') {
+                    let opening_line_start = content[..i].rfind('\n').map(|pos| pos + 1).unwrap_or(0);
+                    let opening_line = &content[opening_line_start..i + opening_line_end.min(end - i)];
+
+                    // If opening line is all '=' (setext underline), don't treat as highlight
+                    if opening_line.chars().all(|c| c == '=' || c.is_whitespace())
+                        && opening_line.chars().filter(|c| *c == '=').count() >= 3 {
+                        i += 1;
+                        continue;
+                    }
+                }
+
+                // Valid highlight found
+                spans.push(Span {
+                    start: i,
+                    end,
+                    kind: SpanKind::Highlight,
+                });
+                i = end;
+                continue;
             }
             i += 1;
         }
@@ -1621,6 +1745,12 @@ impl MarkdownParser {
         while i < bytes.len() {
             // Skip delimiters inside code spans
             if is_in_code_span(i) {
+                i += 1;
+                continue;
+            }
+
+            // Skip escaped delimiters
+            if Self::is_escaped(content, i) {
                 i += 1;
                 continue;
             }
@@ -1979,6 +2109,8 @@ impl MarkdownParser {
             // Block elements
             "block_quote" => Some(SpanKind::BlockQuote),
             "thematic_break" => Some(SpanKind::HorizontalRule),
+            "paragraph" => Some(SpanKind::Paragraph),
+            "html_block" => Some(SpanKind::HtmlBlock),
 
             // Inline markers - these are the actual * and ` characters
             // We'll use post-processing to find bold/italic/code ranges
