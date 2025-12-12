@@ -728,7 +728,8 @@ impl MarkdownParser {
         while i < len {
             // Inline code: `code`, ``code``, etc.
             // Opening and closing backtick counts must match
-            if bytes[i] == b'`'
+            // Skip escaped backticks
+            if bytes[i] == b'`' && !Self::is_escaped(content, i)
                 && let Some((start, end)) = self.find_code_span(content, i)
             {
                     // Add the content span (entire code including backticks)
@@ -839,6 +840,29 @@ impl MarkdownParser {
         }).is_ok()
     }
 
+    /// Helper: Check if a character at position is escaped with backslash
+    /// Per CommonMark spec: A backslash before an ASCII punctuation character escapes it
+    fn is_escaped(content: &str, pos: usize) -> bool {
+        if pos == 0 {
+            return false;
+        }
+
+        let bytes = content.as_bytes();
+
+        // Count preceding backslashes
+        let mut backslash_count = 0;
+        let mut check_pos = pos;
+
+        while check_pos > 0 && bytes[check_pos - 1] == b'\\' {
+            backslash_count += 1;
+            check_pos -= 1;
+        }
+
+        // Odd number of backslashes means the character is escaped
+        // (even number means the backslashes escape each other)
+        backslash_count % 2 == 1
+    }
+
     /// Parse strikethrough formatting (~~text~~) - OPTIMIZED
     /// Finds matching pairs of ~~ delimiters
     /// Uses precomputed skip_regions to avoid re-collecting code spans
@@ -849,6 +873,12 @@ impl MarkdownParser {
         while i + 1 < bytes.len() {
             // Skip positions inside code spans
             if Self::is_in_skip_region(i, skip_regions) {
+                i += 1;
+                continue;
+            }
+
+            // Skip escaped tildes
+            if Self::is_escaped(content, i) {
                 i += 1;
                 continue;
             }
@@ -916,6 +946,12 @@ impl MarkdownParser {
         while i < len {
             // Skip if inside code span
             if Self::is_in_skip_region(i, skip_regions) {
+                i += 1;
+                continue;
+            }
+
+            // Skip escaped characters
+            if Self::is_escaped(content, i) {
                 i += 1;
                 continue;
             }
@@ -1299,6 +1335,12 @@ impl MarkdownParser {
                 continue;
             }
 
+            // Skip escaped characters
+            if Self::is_escaped(content, i) {
+                i += 1;
+                continue;
+            }
+
             // Parse angle bracket autolinks: <https://...> or <email@...>
             if bytes[i] == b'<'
                 && let Some((start, end, kind)) = self.find_angle_autolink(content, i)
@@ -1575,23 +1617,25 @@ impl MarkdownParser {
                 continue;
             }
 
+            // Skip escaped equals signs
+            if Self::is_escaped(content, i) {
+                i += 1;
+                continue;
+            }
+
             if bytes[i] == b'=' && bytes[i + 1] == b'='
                 && let Some(end_offset) = content[i + 2..].find("==")
                 && end_offset > 0  // Check that we have content between the delimiters
             {
-                // Highlights must be on a single line - don't span across newlines
-                // This prevents setext underlines (=====) from matching with ==text== elsewhere
-                let inner_content = &content[i + 2..i + 2 + end_offset];
-                if !inner_content.contains('\n') {
-                    let end = i + 2 + end_offset + 2;
-                    spans.push(Span {
-                        start: i,
-                        end,
-                        kind: SpanKind::Highlight,
-                    });
-                    i = end;
-                    continue;
-                }
+                // Allow highlights to span multiple lines (like other inline formatting)
+                let end = i + 2 + end_offset + 2;
+                spans.push(Span {
+                    start: i,
+                    end,
+                    kind: SpanKind::Highlight,
+                });
+                i = end;
+                continue;
             }
             i += 1;
         }
@@ -1621,6 +1665,12 @@ impl MarkdownParser {
         while i < bytes.len() {
             // Skip delimiters inside code spans
             if is_in_code_span(i) {
+                i += 1;
+                continue;
+            }
+
+            // Skip escaped delimiters
+            if Self::is_escaped(content, i) {
                 i += 1;
                 continue;
             }
