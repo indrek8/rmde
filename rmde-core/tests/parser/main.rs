@@ -20,3 +20,4 @@ mod markers;
 mod streaming;
 mod artifacts;
 mod spankind_sync;
+mod comprehensive;
