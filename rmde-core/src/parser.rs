@@ -1698,50 +1698,95 @@ impl MarkdownParser {
                 let opener_count = opener.count;
                 let closer_count = closer.count;
 
-                // Use the minimum of both counts (at most 2 for bold)
-                let use_count = opener_count.min(closer_count).min(2);
+                // Special case: 3+ delimiters on both sides = bold+italic (***text***)
+                if opener_count >= 3 && closer_count >= 3 {
+                    // Create BoldItalic span for the entire region
+                    spans.push(Span {
+                        start: opener.start,
+                        end: closer.start + 3,
+                        kind: SpanKind::BoldItalic,
+                    });
 
-                // Determine span kind
-                let kind = if use_count == 2 {
-                    SpanKind::Bold
+                    // Also create separate Bold and Italic spans for compatibility
+                    // Bold span (uses middle 2 delimiters conceptually)
+                    spans.push(Span {
+                        start: opener.start + 1,
+                        end: closer.start + 2,
+                        kind: SpanKind::Bold,
+                    });
+
+                    // Italic span (uses innermost content)
+                    spans.push(Span {
+                        start: opener.start + 2,
+                        end: closer.start + 1,
+                        kind: SpanKind::Italic,
+                    });
+
+                    // Emit marker spans for all 3 delimiters
+                    // Opening markers
+                    spans.push(Span {
+                        start: opener.start,
+                        end: opener.start + 3,
+                        kind: SpanKind::MarkerBold,
+                    });
+
+                    // Closing markers
+                    spans.push(Span {
+                        start: closer.start,
+                        end: closer.start + 3,
+                        kind: SpanKind::MarkerBold,
+                    });
+
+                    // Mark as processed
+                    processed[opener_idx] = true;
+                    processed[closer_idx] = true;
                 } else {
-                    SpanKind::Italic
-                };
+                    // Normal case: 1 or 2 delimiters
+                    // Use the minimum of both counts (at most 2 for bold)
+                    let use_count = opener_count.min(closer_count).min(2);
 
-                // Create span from opener end to closer start
-                let span_start = opener.start + (opener_count - use_count);
-                let span_end = closer.start + use_count;
+                    // Determine span kind
+                    let kind = if use_count == 2 {
+                        SpanKind::Bold
+                    } else {
+                        SpanKind::Italic
+                    };
 
-                spans.push(Span {
-                    start: span_start,
-                    end: span_end,
-                    kind,
-                });
+                    // Create span from opener end to closer start
+                    let span_start = opener.start + (opener_count - use_count);
+                    let span_end = closer.start + use_count;
 
-                // Emit marker spans for opening and closing delimiters
-                let marker_kind = if use_count == 2 {
-                    SpanKind::MarkerBold
-                } else {
-                    SpanKind::MarkerItalic
-                };
+                    spans.push(Span {
+                        start: span_start,
+                        end: span_end,
+                        kind,
+                    });
 
-                // Opening marker
-                spans.push(Span {
-                    start: span_start,
-                    end: span_start + use_count,
-                    kind: marker_kind,
-                });
+                    // Emit marker spans for opening and closing delimiters
+                    let marker_kind = if use_count == 2 {
+                        SpanKind::MarkerBold
+                    } else {
+                        SpanKind::MarkerItalic
+                    };
 
-                // Closing marker
-                spans.push(Span {
-                    start: closer.start,
-                    end: closer.start + use_count,
-                    kind: marker_kind,
-                });
+                    // Opening marker
+                    spans.push(Span {
+                        start: span_start,
+                        end: span_start + use_count,
+                        kind: marker_kind,
+                    });
 
-                // Mark as processed
-                processed[opener_idx] = true;
-                processed[closer_idx] = true;
+                    // Closing marker
+                    spans.push(Span {
+                        start: closer.start,
+                        end: closer.start + use_count,
+                        kind: marker_kind,
+                    });
+
+                    // Mark as processed
+                    processed[opener_idx] = true;
+                    processed[closer_idx] = true;
+                }
 
                 break;
             }
