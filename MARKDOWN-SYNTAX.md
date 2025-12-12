@@ -45,6 +45,7 @@ This document comprehensively documents Markdown syntax based on:
 7. [LLM-Specific Patterns](#llm-specific-patterns)
 8. [Edge Cases and Ambiguities](#edge-cases-and-ambiguities)
 9. [Implementation Notes](#implementation-notes)
+10. [Unsupported Features](#unsupported-features)
 
 ---
 
@@ -1876,6 +1877,129 @@ This <em>works</em> with *markdown*.
    - Large documents (1MB+)
    - Deeply nested structures
    - Streaming/incremental parsing
+
+---
+
+## Unsupported Features
+
+The following extended markdown features are **intentionally not supported** by RMDE. These features are outside the scope of the CommonMark and GitHub Flavored Markdown (GFM) specifications that RMDE focuses on.
+
+### Definition Lists
+
+**Standard:** PHP Markdown Extra
+
+**Status:** NOT SUPPORTED
+
+**Syntax (will not be parsed):**
+```markdown
+Term
+: Definition 1
+: Definition 2
+
+Another term
+:   Definition with indentation
+    and multiple lines
+```
+
+**Why unsupported:**
+Definition lists are a PHP Markdown Extra extension not part of CommonMark or GFM. They have limited adoption across markdown processors and are not essential for the majority of markdown use cases.
+
+**Alternative:**
+Use standard lists or HTML:
+```markdown
+- **Term**: Definition 1
+- **Another term**: Definition with details
+```
+
+Or:
+```html
+<dl>
+<dt>Term</dt>
+<dd>Definition 1</dd>
+<dd>Definition 2</dd>
+</dl>
+```
+
+---
+
+### Abbreviations
+
+**Standard:** PHP Markdown Extra
+
+**Status:** NOT SUPPORTED
+
+**Syntax (will not be parsed):**
+```markdown
+The HTML specification is maintained by W3C.
+
+*[HTML]: Hyper Text Markup Language
+*[W3C]: World Wide Web Consortium
+```
+
+**Why unsupported:**
+Abbreviations are a PHP Markdown Extra feature with very limited adoption. They require document-wide parsing and state management that conflicts with incremental parsing goals. The feature adds complexity without broad utility.
+
+**Alternative:**
+Use parenthetical definitions on first use:
+```markdown
+The HTML (Hyper Text Markup Language) specification is maintained by W3C (World Wide Web Consortium).
+```
+
+Or use HTML directly:
+```html
+The <abbr title="Hyper Text Markup Language">HTML</abbr> specification...
+```
+
+---
+
+### Subscript and Superscript
+
+**Standard:** Extended Syntax (various implementations)
+
+**Status:** NOT SUPPORTED
+
+**Syntax (will not be parsed):**
+```markdown
+H~2~O        (subscript)
+E=mc^2^      (superscript)
+CO~2~        (subscript)
+x^2^+y^2^    (superscript)
+```
+
+**Why unsupported:**
+Subscript and superscript markdown syntax lacks standardization. Different processors use conflicting syntaxes (`~text~`, `^text^` vs other patterns). This creates portability issues and parsing ambiguities.
+
+**Alternative:**
+Use HTML tags:
+```html
+H<sub>2</sub>O
+E=mc<sup>2</sup>
+```
+
+For mathematical expressions, use math syntax (which IS supported):
+```markdown
+$H_2O$        (inline math)
+$E=mc^2$      (inline math)
+```
+
+---
+
+### Notes on Scope
+
+**RMDE focuses on:**
+1. Full CommonMark v0.31.2 compliance
+2. GitHub Flavored Markdown (GFM) extensions:
+   - Tables
+   - Task lists
+   - Strikethrough
+   - Extended autolinks
+3. Widely adopted extensions:
+   - Footnotes
+   - Math blocks (inline and display)
+   - Highlighting
+
+**Future consideration:**
+If there is significant demand for any of these unsupported features, they may be reconsidered for future versions. Feature requests can be submitted with use case justification.
 
 ---
 

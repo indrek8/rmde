@@ -208,13 +208,31 @@ MarkerTaskBox = 112
 
 These features were not in the original plan but could be added:
 
-### Not Implemented
+### Not Implemented (Intentionally Out of Scope)
+
+The following features are **intentionally not supported** and are not planned for future implementation. See [MARKDOWN-SYNTAX.md](MARKDOWN-SYNTAX.md#unsupported-features) for detailed rationale and alternatives.
+
+1. **Definition Lists** (Category 21)
+   - PHP Markdown Extra syntax: `Term\n: Definition`
+   - Reason: Limited adoption, not part of CommonMark/GFM
+   - Alternative: Use standard lists with bold terms or HTML `<dl>` tags
+
+2. **Abbreviations** (Category 22)
+   - PHP Markdown Extra syntax: `*[ABBR]: Full text`
+   - Reason: Very limited adoption, conflicts with incremental parsing goals
+   - Alternative: Use parenthetical definitions or HTML `<abbr>` tags
+
+3. **Subscript/Superscript** (Category 23)
+   - Extended syntax: `H~2~O` and `E=mc^2^`
+   - Reason: Non-standardized, parsing ambiguities
+   - Alternative: Use HTML `<sub>`/`<sup>` tags or math syntax (`$H_2O$`)
+
+### Not Implemented (Optional Future Enhancements)
+
+These features could potentially be added if there is sufficient demand:
 
 1. **MarkerBlockquote** - For `>` in blockquotes
 2. **MarkerHighlight** - For `==` in highlight syntax
-3. **Definition Lists** - PHP Markdown Extra
-4. **Abbreviations** - PHP Markdown Extra
-5. **Sub/Superscript** - `~sub~` and `^super^`
 
 ### Ghost Mode UI Toggle
 
