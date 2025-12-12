@@ -1393,6 +1393,44 @@ impl MarkdownParser {
                 }
             }
 
+            // Parse GFM bare email addresses (user@example.com)
+            // Look for @ symbol and check if it's a valid email
+            if bytes[i] == b'@' && i > 0 {
+                // Scan backwards to find the start of the email (before @)
+                let mut start = i;
+                while start > 0 {
+                    let ch = bytes[start - 1];
+                    if ch.is_ascii_alphanumeric() || ch == b'.' || ch == b'-' || ch == b'_' || ch == b'+' {
+                        start -= 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                // Scan forwards to find the end of the email (after @)
+                let mut end = i + 1;
+                while end < len {
+                    let ch = bytes[end];
+                    if ch.is_ascii_alphanumeric() || ch == b'.' || ch == b'-' {
+                        end += 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                // Validate that we have a reasonable email pattern
+                let potential_email = &content[start..end];
+                if self.is_valid_email(potential_email) {
+                    spans.push(Span {
+                        start,
+                        end,
+                        kind: SpanKind::AutolinkEmail,
+                    });
+                    i = end;
+                    continue;
+                }
+            }
+
             i += 1;
         }
     }
