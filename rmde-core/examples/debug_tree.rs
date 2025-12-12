@@ -39,6 +39,9 @@ fn main() {
         "[Simple link](https://example.com)",
         "![Alt text](image.png)",
         "---",
+        "***",
+        "___",
+        "* * *",
         "***text***",
     ];
 

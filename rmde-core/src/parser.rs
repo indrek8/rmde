@@ -156,6 +156,10 @@ impl MarkdownParser {
         // tree-sitter-md doesn't recognize these, so we detect them manually
         self.collect_setext_headings(content, &mut spans);
 
+        // Add thematic breaks (---, ***, ___)
+        // tree-sitter-md doesn't recognize these, so we detect them manually
+        self.collect_thematic_breaks(content, &mut spans);
+
         // Add GFM tables (pipe tables)
         // tree-sitter-md doesn't recognize GFM tables, so we detect them manually
         self.parse_tables(content, &mut spans);
@@ -226,6 +230,98 @@ impl MarkdownParser {
             }
             i += 1;
         }
+    }
+
+    /// Detect thematic breaks (horizontal rules): ---, ***, ___
+    /// Per CommonMark spec:
+    /// - Must be 3 or more -, *, or _ characters
+    /// - Can have spaces between them: - - -
+    /// - Can have up to 3 spaces of indentation
+    /// - Must be on their own line (or at start of content)
+    fn collect_thematic_breaks(&self, content: &str, spans: &mut Vec<Span>) {
+        if content.is_empty() {
+            return;
+        }
+
+        // Track byte positions for each line
+        let mut line_starts: Vec<usize> = vec![0];
+        for (i, c) in content.char_indices() {
+            if c == '\n' {
+                line_starts.push(i + 1);
+            }
+        }
+
+        let lines: Vec<&str> = content.lines().collect();
+
+        for (line_idx, line) in lines.iter().enumerate() {
+            // Check if this line is a thematic break
+            if self.is_thematic_break(line) {
+                let start = line_starts[line_idx];
+                let end = if line_idx + 1 < line_starts.len() {
+                    line_starts[line_idx + 1].saturating_sub(1) // Don't include newline
+                } else {
+                    content.len()
+                };
+
+                // Don't create thematic break if this line is already part of a setext heading
+                // Check if previous line exists and current line could be a setext underline
+                let is_setext_underline = if line_idx > 0 {
+                    let prev_line = lines[line_idx - 1];
+                    !prev_line.trim().is_empty() && (line.chars().all(|c| c == '=' || c.is_whitespace()) ||
+                                                      line.chars().all(|c| c == '-' || c.is_whitespace()))
+                } else {
+                    false
+                };
+
+                if !is_setext_underline {
+                    spans.push(Span {
+                        start,
+                        end,
+                        kind: SpanKind::HorizontalRule,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Check if a line is a valid thematic break
+    /// Per CommonMark: 3+ of same char (-, *, _) with optional spaces
+    fn is_thematic_break(&self, line: &str) -> bool {
+        let trimmed = line.trim_start();
+
+        // Check indentation (max 3 spaces allowed)
+        let indent = line.len() - trimmed.len();
+        if indent > 3 {
+            return false;
+        }
+
+        // Must not be empty after trimming
+        if trimmed.is_empty() {
+            return false;
+        }
+
+        // Determine the character (must be -, *, or _)
+        let first_char = trimmed.chars().next().unwrap();
+        if first_char != '-' && first_char != '*' && first_char != '_' {
+            return false;
+        }
+
+        // Count occurrences of the character (ignoring spaces)
+        let mut count = 0;
+        for c in trimmed.chars() {
+            if c == first_char {
+                count += 1;
+            } else if c == ' ' || c == '\t' {
+                // Spaces are allowed
+                continue;
+            } else {
+                // Any other character makes it not a thematic break
+                return false;
+            }
+        }
+
+        // Must have at least 3 of the character
+        count >= 3
     }
 
     /// Parse GFM pipe tables
