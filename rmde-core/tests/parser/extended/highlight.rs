@@ -71,14 +71,15 @@ fn test_highlight_not_in_code() {
 }
 
 #[test]
-fn test_highlight_no_multiline() {
+fn test_highlight_multiline() {
     let mut parser = MarkdownParser::new().unwrap();
     let content = "==This is\na multiline\nhighlight==";
     let spans = parser.parse(content);
 
     let hl: Vec<_> = spans.iter().filter(|s| s.kind == SpanKind::Highlight).collect();
-    // Highlights must be on a single line to avoid conflicts with setext heading underlines (=====)
-    assert_eq!(hl.len(), 0, "Highlights should not span multiple lines");
+    // Multiline highlights are supported - setext underlines (lines of only ===) are detected and skipped
+    assert_eq!(hl.len(), 1, "Highlights can span multiple lines");
+    assert_eq!(&content[hl[0].start..hl[0].end], "==This is\na multiline\nhighlight==");
 }
 
 #[test]

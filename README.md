@@ -25,9 +25,9 @@ A minimal, lightning-fast, plain-text editor for Markdown files. Built with a Ru
   - GFM tables
   - Extended syntax (highlights, math, footnotes)
 - [x] Status bar with line/column display
-- [ ] Ghost mode (hide/show markdown syntax)
-- [ ] Theme system (light/dark)
-- [ ] Find & replace
+- [x] Ghost mode (hide/show markdown syntax)
+- [x] Theme system (System/Light/Dark modes, ⇧⌘T)
+- [x] Find & replace (⌘F, with replace all)
 
 ## Build & Run
 

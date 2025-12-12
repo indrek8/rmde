@@ -47,6 +47,9 @@ struct EditorView: NSViewRepresentable {
 
         scrollView.documentView = textView
 
+        // Store textView reference in editorState for find/replace
+        editorState.textView = textView
+
         return scrollView
     }
 
@@ -62,9 +65,11 @@ struct EditorView: NSViewRepresentable {
             textView.setSelectedRange(NSRange(location: 0, length: 0))
         }
 
-        // Apply highlights when highlight version changes
-        if context.coordinator.highlightVersion != editorState.highlightVersion {
+        // Apply highlights when highlight version changes OR ghost mode changes
+        if context.coordinator.highlightVersion != editorState.highlightVersion ||
+           context.coordinator.ghostMode != editorState.ghostMode {
             context.coordinator.highlightVersion = editorState.highlightVersion
+            context.coordinator.ghostMode = editorState.ghostMode
             applyHighlights(to: textView)
         }
     }
@@ -92,14 +97,14 @@ struct EditorView: NSViewRepresentable {
             let range = NSRange(location: span.start, length: span.end - span.start)
             guard range.location >= 0, range.location + range.length <= textStorage.length else { continue }
 
-            let attrs = attributesForKind(span.kind)
+            let attrs = attributesForKind(span.kind, ghostMode: editorState.ghostMode)
             textStorage.addAttributes(attrs, range: range)
         }
 
         textStorage.endEditing()
     }
 
-    private func attributesForKind(_ kind: UInt64) -> [NSAttributedString.Key: Any] {
+    private func attributesForKind(_ kind: UInt64, ghostMode: Bool) -> [NSAttributedString.Key: Any] {
         let baseFont = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
 
         switch kind {
@@ -265,35 +270,23 @@ struct EditorView: NSViewRepresentable {
             ]
 
         // Markers for ghost mode (100+)
-        // These will be styled for visibility initially, then can be made "ghost" in phase 4
-        case HighlightSpan.markerHeading:
-            return [
-                .foregroundColor: NSColor.systemGray
-            ]
-        case HighlightSpan.markerBold, HighlightSpan.markerItalic:
-            return [
-                .foregroundColor: NSColor.systemGray
-            ]
-        case HighlightSpan.markerStrikethrough:
-            return [
-                .foregroundColor: NSColor.systemGray
-            ]
-        case HighlightSpan.markerCode:
-            return [
-                .foregroundColor: NSColor.systemGray
-            ]
-        case HighlightSpan.markerLink, HighlightSpan.markerImage:
-            return [
-                .foregroundColor: NSColor.systemGray
-            ]
-        case HighlightSpan.markerListBullet, HighlightSpan.markerListNumber:
-            return [
-                .foregroundColor: NSColor.systemGray
-            ]
-        case HighlightSpan.markerTaskBox:
-            return [
-                .foregroundColor: NSColor.systemGray
-            ]
+        // When ghostMode is enabled, markers are hidden (clear color)
+        // When ghostMode is disabled, markers are shown in gray
+        case HighlightSpan.markerHeading,
+             HighlightSpan.markerBold,
+             HighlightSpan.markerItalic,
+             HighlightSpan.markerStrikethrough,
+             HighlightSpan.markerCode,
+             HighlightSpan.markerLink,
+             HighlightSpan.markerImage,
+             HighlightSpan.markerListBullet,
+             HighlightSpan.markerListNumber,
+             HighlightSpan.markerTaskBox:
+            if ghostMode {
+                return [.foregroundColor: NSColor.clear]  // Hide markers in ghost mode
+            } else {
+                return [.foregroundColor: NSColor.systemGray]  // Show markers normally
+            }
 
         default:
             return [:]
@@ -307,6 +300,7 @@ struct EditorView: NSViewRepresentable {
     class Coordinator: NSObject, NSTextViewDelegate {
         var loadedVersion: Int = -1  // Track which content version is loaded
         var highlightVersion: Int = -1  // Track which highlight version is applied
+        var ghostMode: Bool = false  // Track ghost mode state
 
         func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString text: String?) -> Bool {
             guard let rmdeTextView = textView as? RMDETextView,

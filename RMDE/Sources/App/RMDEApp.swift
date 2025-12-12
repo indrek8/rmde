@@ -36,6 +36,38 @@ struct RMDEApp: App {
 
             // Note: Undo/Redo handled natively by NSTextView (NSUndoManager)
 
+            CommandGroup(after: .textEditing) {
+                Divider()
+
+                Button("Find...") {
+                    editorState.findState.isVisible = true
+                    editorState.findState.showReplace = false
+                }
+                .keyboardShortcut("f", modifiers: .command)
+
+                Button("Find Next") {
+                    if !editorState.findState.isVisible {
+                        editorState.findState.isVisible = true
+                    }
+                    editorState.findNext()
+                }
+                .keyboardShortcut("g", modifiers: .command)
+
+                Button("Find Previous") {
+                    if !editorState.findState.isVisible {
+                        editorState.findState.isVisible = true
+                    }
+                    editorState.findPrevious()
+                }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
+
+                Button("Find and Replace...") {
+                    editorState.findState.isVisible = true
+                    editorState.findState.showReplace = true
+                }
+                .keyboardShortcut("f", modifiers: [.command, .option])
+            }
+
             CommandGroup(after: .windowArrangement) {
                 Button("Next Tab") {
                     editorState.nextTab()
@@ -46,6 +78,16 @@ struct RMDEApp: App {
                     editorState.prevTab()
                 }
                 .keyboardShortcut("[", modifiers: [.command, .shift])
+            }
+
+            CommandGroup(after: .toolbar) {
+                Toggle("Ghost Mode", isOn: $editorState.ghostMode)
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
+
+                Button("Toggle Theme (\(editorState.themeManager.currentMode.label))") {
+                    editorState.toggleTheme()
+                }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
             }
         }
     }
