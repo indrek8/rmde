@@ -199,34 +199,41 @@ impl MarkdownParser {
         let lines: Vec<&str> = content.lines().collect();
 
         let mut i = 0;
-        while i + 1 < lines.len() {
-            let current = lines[i];
-            let next = lines[i + 1];
-
-            if current.is_empty() || next.is_empty() {
+        while i < lines.len() {
+            // Check if current line is a setext underline
+            let line = lines[i];
+            if line.is_empty() {
                 i += 1;
                 continue;
             }
 
-            let is_equals = next.chars().all(|c| c == '=');
-            let is_dashes = next.chars().all(|c| c == '-') && !next.is_empty();
+            let is_equals = line.chars().all(|c| c == '=');
+            let is_dashes = line.chars().all(|c| c == '-') && !line.is_empty();
 
             if is_equals || is_dashes {
-                let start = line_starts[i];
-                // End is start of line after underline, or end of content
-                let end = if i + 2 < line_starts.len() {
-                    line_starts[i + 2].saturating_sub(1)  // Don't include final newline
-                } else {
-                    content.len()
-                };
+                // This is a potential setext underline
+                // Find the start of the heading text (scan backwards for non-empty lines)
+                let mut heading_start_line = i;
+                while heading_start_line > 0 && !lines[heading_start_line - 1].is_empty() {
+                    heading_start_line -= 1;
+                }
 
-                spans.push(Span {
-                    start,
-                    end,
-                    kind: if is_equals { SpanKind::Heading1 } else { SpanKind::Heading2 },
-                });
-                i += 2;
-                continue;
+                // Make sure we have at least one line of heading text
+                if heading_start_line < i {
+                    let start = line_starts[heading_start_line];
+                    // End is start of line after underline, or end of content
+                    let end = if i + 1 < line_starts.len() {
+                        line_starts[i + 1].saturating_sub(1)  // Don't include final newline
+                    } else {
+                        content.len()
+                    };
+
+                    spans.push(Span {
+                        start,
+                        end,
+                        kind: if is_equals { SpanKind::Heading1 } else { SpanKind::Heading2 },
+                    });
+                }
             }
             i += 1;
         }
