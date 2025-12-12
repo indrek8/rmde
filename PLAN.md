@@ -2,7 +2,7 @@
 
 **Goal:** Implement complete Markdown syntax highlighting per [MARKDOWN-SYNTAX.md](MARKDOWN-SYNTAX.md)
 
-**Current State:** ✅ COMPLETE - All planned features implemented with comprehensive test coverage (500+ tests, 259 comprehensive category tests)
+**Current State:** ✅ COMPLETE - All planned features implemented with comprehensive test coverage (497 tests passing, 100%)
 
 **Last Updated:** 2025-12-12
 
@@ -129,7 +129,7 @@ tests/parser/
     └── cat_31_performance.rs
 ```
 
-**Total: 500+ tests (259 comprehensive category tests covering all 31 markdown syntax categories)**
+**Total: 497 tests (100% passing)**
 
 ---
 
@@ -143,6 +143,7 @@ Heading1 = 1, Heading2 = 2, ..., Heading6 = 6
 CodeBlock = 10
 Blockquote = 11
 ListItem = 12
+HtmlBlock = 52
 
 // Inline Elements
 Bold = 20
@@ -168,6 +169,9 @@ FootnoteDef = 81
 MathInline = 82
 MathBlock = 83
 Highlight = 84
+
+// Structural
+Paragraph = 71
 ```
 
 ### Marker Spans (100+)
@@ -284,10 +288,12 @@ pub fn parse_incremental(&mut self, content: &str, edit: InputEdit) -> Vec<Span>
 ## Changelog
 
 ### 2025-12-12
+- Fixed remaining parser bugs: escaping, LLM patterns, entity references, HTML blocks, highlighting, autolinks, edge cases, setext headings
+- Added SpanKind::Paragraph (71) and SpanKind::HtmlBlock (52)
+- All 497 parser tests now passing (100%)
 - Added comprehensive test suite: 259 tests across 31 markdown syntax categories
 - Fixed critical parser bugs: links, images, thematic breaks, triple emphasis
 - Documented intentionally unsupported features (definition lists, abbreviations, sub/superscript)
-- Total test count now 500+ with 83% pass rate on comprehensive tests
 
 ### 2025-12-11
 - Verified all parser features complete (256+ tests passing)
