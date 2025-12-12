@@ -58,6 +58,7 @@ pub enum SpanKind {
     // Block elements
     BlockQuote = 50,
     HorizontalRule = 51,
+    HtmlBlock = 52,
 
     // Tables (GFM)
     TableHeader = 60,
@@ -1673,8 +1674,41 @@ impl MarkdownParser {
                 && let Some(end_offset) = content[i + 2..].find("==")
                 && end_offset > 0  // Check that we have content between the delimiters
             {
-                // Allow highlights to span multiple lines (like other inline formatting)
                 let end = i + 2 + end_offset + 2;
+                let content_between = &content[i + 2..i + 2 + end_offset];
+
+                // Check if the closing == is part of a setext underline (line of only '=')
+                // Setext underlines are lines that contain ONLY '=' characters (at least 3)
+                // Find the line containing the closing ==
+                if let Some(closing_line_start) = content[..i + 2 + end_offset].rfind('\n') {
+                    let closing_line_start = closing_line_start + 1;
+                    let closing_line_end = content[i + 2 + end_offset..].find('\n')
+                        .map(|pos| i + 2 + end_offset + pos)
+                        .unwrap_or(content.len());
+                    let closing_line = &content[closing_line_start..closing_line_end];
+
+                    // If the closing line is all '=' (setext underline), don't treat as highlight
+                    if closing_line.chars().all(|c| c == '=' || c.is_whitespace())
+                        && closing_line.chars().filter(|c| *c == '=').count() >= 3 {
+                        i += 1;
+                        continue;
+                    }
+                }
+
+                // Also check opening line for setext pattern
+                if let Some(opening_line_end) = content[i..].find('\n') {
+                    let opening_line_start = content[..i].rfind('\n').map(|pos| pos + 1).unwrap_or(0);
+                    let opening_line = &content[opening_line_start..i + opening_line_end.min(end - i)];
+
+                    // If opening line is all '=' (setext underline), don't treat as highlight
+                    if opening_line.chars().all(|c| c == '=' || c.is_whitespace())
+                        && opening_line.chars().filter(|c| *c == '=').count() >= 3 {
+                        i += 1;
+                        continue;
+                    }
+                }
+
+                // Valid highlight found
                 spans.push(Span {
                     start: i,
                     end,
@@ -2076,6 +2110,7 @@ impl MarkdownParser {
             "block_quote" => Some(SpanKind::BlockQuote),
             "thematic_break" => Some(SpanKind::HorizontalRule),
             "paragraph" => Some(SpanKind::Paragraph),
+            "html_block" => Some(SpanKind::HtmlBlock),
 
             // Inline markers - these are the actual * and ` characters
             // We'll use post-processing to find bold/italic/code ranges
